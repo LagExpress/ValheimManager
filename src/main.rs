@@ -2,16 +2,60 @@ mod app;
 mod packager;
 mod profile;
 
+use std::path::PathBuf;
 use app::ModpackApp;
 use eframe::egui;
 
+fn ensure_desktop_integration() {
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(data_dir) = dirs::data_dir() {
+            let apps_dir = data_dir.join("applications");
+            let icons_dir = data_dir.join("icons").join("hicolor").join("256x256").join("apps");
+            let _ = std::fs::create_dir_all(&apps_dir);
+            let _ = std::fs::create_dir_all(&icons_dir);
+
+            // Install icon so desktop panels can find it
+            let icon_file = icons_dir.join("valheim-modpack-studio.png");
+            let _ = std::fs::write(&icon_file, packager::EMBEDDED_ICON);
+
+            // Determine app executable (AppImage path or native binary)
+            let exe_path = std::env::var("APPIMAGE")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| std::env::current_exe().unwrap_or_default());
+
+            let desktop_file = apps_dir.join("valheim-modpack-studio.desktop");
+            let desktop_content = format!(
+                "[Desktop Entry]\nType=Application\nName=Valheim Modpack Studio\nComment=Create Thunderstore-ready modpacks from r2modman profiles\nExec=\"{}\"\nIcon=valheim-modpack-studio\nCategories=Game;Utility;\nTerminal=false\nStartupWMClass=valheim-modpack-studio\nKeywords=valheim;mods;modpack;thunderstore;\n",
+                exe_path.display()
+            );
+            let _ = std::fs::write(desktop_file, desktop_content);
+        }
+    }
+}
+
 fn main() -> eframe::Result<()> {
-    // Window configuration
+    ensure_desktop_integration();
+
+    let icon = eframe::icon_data::from_png_bytes(packager::EMBEDDED_ICON).ok();
+
+    // Window configuration with explicit app_id and decoration buttons for Wayland / COSMIC
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_app_id("valheim-modpack-studio")
+        .with_inner_size([980.0, 720.0])
+        .with_min_inner_size([800.0, 520.0])
+        .with_title("Valheim Modpack Studio")
+        .with_resizable(true)
+        .with_maximize_button(true)
+        .with_minimize_button(true)
+        .with_close_button(true);
+
+    if let Some(icon) = icon {
+        viewport = viewport.with_icon(icon);
+    }
+
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([980.0, 720.0])
-            .with_min_inner_size([800.0, 520.0])
-            .with_title("Valheim Modpack Studio"),
+        viewport,
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
             supported_backends: eframe::wgpu::Backends::all(),

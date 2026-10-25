@@ -89,6 +89,15 @@ if [ -z "${VK_DRIVER_FILES}" ] && [ -z "${VK_ICD_FILENAMES}" ]; then
   fi
 fi
 
+# Ensure desktop entry and icons are registered with host compositor (COSMIC / GNOME / KDE)
+if [ -n "$APPIMAGE" ]; then
+  LOCAL_APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+  LOCAL_ICONS="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/256x256/apps"
+  mkdir -p "$LOCAL_APPS" "$LOCAL_ICONS" 2>/dev/null || true
+  cp -u "${HERE}/usr/share/icons/hicolor/256x256/apps/valheim-modpack-studio.png" "$LOCAL_ICONS/" 2>/dev/null || true
+  sed "s|Exec=valheim-modpack-studio|Exec=\"${APPIMAGE}\"|g" "${HERE}/usr/share/applications/valheim-modpack-studio.desktop" > "$LOCAL_APPS/valheim-modpack-studio.desktop" 2>/dev/null || true
+fi
+
 exec "${HERE}/usr/bin/valheim-modpack-studio" "$@"
 EOF
 chmod +x "$APPDIR/AppRun"

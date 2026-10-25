@@ -165,6 +165,9 @@ impl ModpackApp {
 
 impl eframe::App for ModpackApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Keep active heartbeat so compositor restore/unminimize immediately repaints
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
+
         // Top Navigation Bar
         egui::TopBottomPanel::top("top_header").show(ctx, |ui| {
             ui.add_space(6.0);
