@@ -6,7 +6,7 @@ authors = ["Mateo"]
 description = "Cross-platform GUI for creating Valheim modpacks from r2modman profiles"
 
 [dependencies]
-eframe = { version = "0.29", default-features = false, features = ["default", "glow"] }
+eframe = { version = "0.29", default-features = false, features = ["default_fonts", "wgpu", "wayland", "x11"] }
 egui_extras = { version = "0.29", features = ["all_loaders"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1.0", features = ["derive"] }
