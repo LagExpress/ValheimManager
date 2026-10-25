@@ -1,0 +1,21 @@
+# Devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml
+
+# Build artifacts
+build/
+dist/
+*.zip
+
+# Node
+node_modules/
+
+# Rust target
+/target/

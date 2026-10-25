@@ -1,0 +1,26 @@
+[package]
+name = "valheim-modpack-studio"
+version = "1.0.0"
+edition = "2021"
+authors = ["Mateo"]
+description = "Cross-platform GUI for creating Valheim modpacks from r2modman profiles"
+
+[dependencies]
+eframe = { version = "0.29", default-features = false, features = ["default", "glow"] }
+egui_extras = { version = "0.29", features = ["all_loaders"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+walkdir = "2.5"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+rfd = "0.15"
+dirs = "5.0"
+regex = "1.10"
+opener = { version = "0.7", features = ["reveal"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

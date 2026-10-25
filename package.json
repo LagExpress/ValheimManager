@@ -1,0 +1,24 @@
+{
+  "name": "valheim-modpack-generator",
+  "version": "1.0.0",
+  "description": "CLI tool to generate Thunderstore-ready Valheim modpacks directly from r2modman profiles",
+  "main": "valheim-pack.js",
+  "bin": {
+    "valheim-pack": "./valheim-pack.js"
+  },
+  "scripts": {
+    "start": "node valheim-pack.js",
+    "pack": "node valheim-pack.js",
+    "profiles": "node valheim-pack.js --list-profiles",
+    "mods": "node valheim-pack.js --list-mods",
+    "configs": "node valheim-pack.js --list-configs"
+  },
+  "keywords": [
+    "valheim",
+    "r2modman",
+    "thunderstore",
+    "modpack"
+  ],
+  "author": "mateo",
+  "license": "MIT"
+}

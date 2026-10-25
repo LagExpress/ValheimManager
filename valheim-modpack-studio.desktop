@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Valheim Modpack Studio
+Comment=Create Thunderstore-ready modpacks from r2modman profiles
+Exec=valheim-modpack-studio
+Icon=valheim-modpack-studio
+Categories=Game;Utility;
+Terminal=false
+StartupWMClass=valheim-modpack-studio
