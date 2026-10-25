@@ -31,7 +31,7 @@ cp "$ROOT_DIR/src/assets/icon.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps
 cp "$ROOT_DIR/src/assets/icon.png" "$APPDIR/valheim-modpack-studio.png"
 cp "$ROOT_DIR/src/assets/icon.png" "$APPDIR/.DirIcon"
 
-# Bundle common Wayland/X11 runtime libraries for maximum portability
+# Bundle common Wayland/X11/Vulkan runtime libraries for maximum portability
 echo "📚 Bundling runtime client libraries..."
 LIB_PATTERNS=(
   "libwayland-client"
@@ -46,6 +46,7 @@ LIB_PATTERNS=(
   "libXrandr"
   "libXrender"
   "libxcb"
+  "libvulkan"
 )
 
 # Search LD_LIBRARY_PATH and standard Nix paths
@@ -58,13 +59,36 @@ for p in "${LIB_PATTERNS[@]}"; do
   done
 done
 
-# Create AppRun script
+# Create robust AppRun script supporting standard Linux and NixOS graphics stacks
 cat <<'EOF' > "$APPDIR/AppRun"
 #!/bin/sh
 HERE="$(dirname "$(readlink -f "${0}")")"
 export PATH="${HERE}/usr/bin:${PATH}"
-export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
-export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS}"
+
+# Add NixOS GPU driver paths if present, alongside AppDir libraries
+NIX_GL_LIB="/run/opengl-driver/lib"
+NIX_SW_LIB="/run/current-system/sw/lib"
+NIX_GL_SHARE="/run/opengl-driver/share"
+NIX_SW_SHARE="/run/current-system/sw/share"
+
+export LD_LIBRARY_PATH="${HERE}/usr/lib:${NIX_GL_LIB}:${NIX_SW_LIB}:${LD_LIBRARY_PATH}"
+export XDG_DATA_DIRS="${HERE}/usr/share:${NIX_GL_SHARE}:${NIX_SW_SHARE}:${XDG_DATA_DIRS}"
+
+# Auto-set VK_DRIVER_FILES on NixOS so Vulkan can locate NVIDIA / Mesa ICD descriptors
+if [ -z "${VK_DRIVER_FILES}" ] && [ -z "${VK_ICD_FILENAMES}" ]; then
+  if [ -d "/run/opengl-driver/share/vulkan/icd.d" ]; then
+    ICD_LIST=""
+    for icd in /run/opengl-driver/share/vulkan/icd.d/*.json; do
+      if [ -f "$icd" ]; then
+        ICD_LIST="${ICD_LIST}${ICD_LIST:+:}${icd}"
+      fi
+    done
+    if [ -n "$ICD_LIST" ]; then
+      export VK_DRIVER_FILES="$ICD_LIST"
+    fi
+  fi
+fi
+
 exec "${HERE}/usr/bin/valheim-modpack-studio" "$@"
 EOF
 chmod +x "$APPDIR/AppRun"
@@ -79,7 +103,7 @@ fi
 SQUASHFS_TMP="$ROOT_DIR/build/appdir-zstd.squashfs"
 rm -f "$SQUASHFS_TMP"
 
-# Use zstd compression (supported out of the box by Type 2 runtime)
+# Use zstd compression
 mksquashfs "$APPDIR" "$SQUASHFS_TMP" -root-owned -noappend -comp zstd
 
 OUTPUT_APPIMAGE="$DIST_DIR/ValheimModpackStudio-x86_64.AppImage"

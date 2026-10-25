@@ -13,6 +13,10 @@ fn main() -> eframe::Result<()> {
             .with_min_inner_size([800.0, 520.0])
             .with_title("Valheim Modpack Studio"),
         renderer: eframe::Renderer::Wgpu,
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+            supported_backends: eframe::wgpu::Backends::all(),
+            ..Default::default()
+        },
         ..Default::default()
     };
 
