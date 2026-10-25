@@ -2,6 +2,23 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use regex::Regex;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModManager {
+    R2Modman,
+    Gale,
+    Custom,
+}
+
+impl ModManager {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ModManager::R2Modman => "r2modman",
+            ModManager::Gale => "Gale",
+            ModManager::Custom => "Custom Path",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawVersionNumber {
     #[serde(default)]
@@ -29,6 +46,23 @@ pub struct RawModEntry {
     pub enabled: bool,
     #[serde(rename = "versionNumber", default)]
     pub version_number: Option<RawVersionNumber>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GaleExportMod {
+    pub name: String,
+    #[serde(default)]
+    pub version: Option<RawVersionNumber>,
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GaleExportProfile {
+    #[serde(rename = "profileName", default)]
+    pub profile_name: String,
+    #[serde(default)]
+    pub mods: Vec<GaleExportMod>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,7 +111,7 @@ pub struct ConfigItem {
     pub selected: bool,
 }
 
-pub fn get_default_profile_roots() -> Vec<PathBuf> {
+pub fn get_r2modman_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
 
     // Linux standard paths
@@ -107,12 +141,57 @@ pub fn get_default_profile_roots() -> Vec<PathBuf> {
     roots.into_iter().filter(|p| p.exists() && p.is_dir()).collect()
 }
 
+pub fn get_gale_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    // Linux Gale paths
+    if let Some(data) = dirs::data_dir() {
+        roots.push(data.join("com.kesomannen.gale").join("valheim").join("profiles"));
+        roots.push(data.join("gale").join("valheim").join("profiles"));
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        roots.push(
+            home.join(".var")
+                .join("app")
+                .join("com.kesomannen.gale")
+                .join("data")
+                .join("com.kesomannen.gale")
+                .join("valheim")
+                .join("profiles"),
+        );
+    }
+
+    // Windows Gale paths (AppData/Local or AppData/Roaming)
+    if let Some(data) = dirs::data_dir() {
+        roots.push(data.join("com.kesomannen.gale").join("valheim").join("profiles"));
+    }
+    if let Some(cfg) = dirs::config_dir() {
+        roots.push(cfg.join("com.kesomannen.gale").join("valheim").join("profiles"));
+    }
+
+    roots.into_iter().filter(|p| p.exists() && p.is_dir()).collect()
+}
+
+#[allow(dead_code)]
+pub fn get_default_profile_roots() -> Vec<PathBuf> {
+    let r2 = get_r2modman_roots();
+    if !r2.is_empty() {
+        return r2;
+    }
+    let gale = get_gale_roots();
+    if !gale.is_empty() {
+        return gale;
+    }
+    Vec::new()
+}
+
 pub fn list_profiles_in_dir(dir: &Path) -> Vec<String> {
     let mut profiles = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() && path.join("mods.yml").exists() {
+            if path.is_dir() && (path.join("mods.yml").exists() || path.join("export.r2x").exists()) {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                     profiles.push(name.to_string());
                 }
@@ -125,46 +204,86 @@ pub fn list_profiles_in_dir(dir: &Path) -> Vec<String> {
 
 pub fn load_mods_from_profile(profile_dir: &Path) -> Result<Vec<ModItem>, String> {
     let mods_file = profile_dir.join("mods.yml");
-    if !mods_file.exists() {
-        return Err(format!("mods.yml not found in {}", profile_dir.display()));
+    let export_file = profile_dir.join("export.r2x");
+
+    if mods_file.exists() {
+        // r2modman mods.yml format
+        let content = std::fs::read_to_string(&mods_file)
+            .map_err(|e| format!("Failed to read mods.yml: {}", e))?;
+
+        let raw_entries: Vec<RawModEntry> = serde_yaml::from_str(&content)
+            .map_err(|e| format!("Failed to parse mods.yml: {}", e))?;
+
+        let mut mods = Vec::new();
+        for raw in raw_entries {
+            let ver = if let Some(vn) = raw.version_number {
+                format!("{}.{}.{}", vn.major, vn.minor, vn.patch)
+            } else {
+                "1.0.0".to_string()
+            };
+
+            let display = if raw.display_name.is_empty() {
+                raw.name.clone()
+            } else {
+                raw.display_name
+            };
+
+            mods.push(ModItem {
+                name: raw.name,
+                author_name: raw.author_name,
+                display_name: display,
+                description: raw.description,
+                website_url: raw.website_url,
+                enabled: raw.enabled,
+                original_version: ver.clone(),
+                current_version: ver,
+                selected: raw.enabled,
+            });
+        }
+        return Ok(mods);
     }
 
-    let content = std::fs::read_to_string(&mods_file)
-        .map_err(|e| format!("Failed to read mods.yml: {}", e))?;
+    if export_file.exists() {
+        // Gale export.r2x format
+        let content = std::fs::read_to_string(&export_file)
+            .map_err(|e| format!("Failed to read export.r2x: {}", e))?;
 
-    let raw_entries: Vec<RawModEntry> = serde_yaml::from_str(&content)
-        .map_err(|e| format!("Failed to parse mods.yml: {}", e))?;
+        let export_data: GaleExportProfile = serde_yaml::from_str(&content)
+            .map_err(|e| format!("Failed to parse export.r2x: {}", e))?;
 
-    let mut mods = Vec::new();
-    for raw in raw_entries {
-        let ver = if let Some(vn) = raw.version_number {
-            format!("{}.{}.{}", vn.major, vn.minor, vn.patch)
-        } else {
-            "1.0.0".to_string()
-        };
+        let mut mods = Vec::new();
+        for m in export_data.mods {
+            let ver = if let Some(vn) = m.version {
+                format!("{}.{}.{}", vn.major, vn.minor, vn.patch)
+            } else {
+                "1.0.0".to_string()
+            };
 
-        let display = if raw.display_name.is_empty() {
-            raw.name.clone()
-        } else {
-            raw.display_name
-        };
+            let (author, display) = if let Some((a, d)) = m.name.split_once('-') {
+                (a.to_string(), d.to_string())
+            } else {
+                ("-".to_string(), m.name.clone())
+            };
 
-        let selected = raw.enabled;
-
-        mods.push(ModItem {
-            name: raw.name,
-            author_name: raw.author_name,
-            display_name: display,
-            description: raw.description,
-            website_url: raw.website_url,
-            enabled: raw.enabled,
-            original_version: ver.clone(),
-            current_version: ver,
-            selected,
-        });
+            mods.push(ModItem {
+                name: m.name.clone(),
+                author_name: author,
+                display_name: display,
+                description: String::new(),
+                website_url: format!("https://thunderstore.io/c/valheim/p/{}/", m.name),
+                enabled: m.enabled,
+                original_version: ver.clone(),
+                current_version: ver,
+                selected: m.enabled,
+            });
+        }
+        return Ok(mods);
     }
 
-    Ok(mods)
+    Err(format!(
+        "No valid profile manifest (mods.yml or export.r2x) found in {}",
+        profile_dir.display()
+    ))
 }
 
 pub fn scan_profile_configs(profile_dir: &Path) -> Vec<ConfigItem> {

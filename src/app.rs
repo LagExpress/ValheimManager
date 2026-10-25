@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use eframe::egui::{self, Color32, RichText, Ui};
 use crate::profile::{
-    get_default_profile_roots, list_profiles_in_dir, load_mods_from_profile,
-    scan_profile_configs, ConfigCategory, ConfigItem, ModItem,
+    get_gale_roots, get_r2modman_roots, list_profiles_in_dir, load_mods_from_profile,
+    scan_profile_configs, ConfigCategory, ConfigItem, ModItem, ModManager,
 };
 use crate::packager::{build_modpack, BuildResult, ModpackOptions};
 
@@ -16,7 +16,8 @@ pub enum ActiveTab {
 }
 
 pub struct ModpackApp {
-    // Directories & Profile
+    // Mod Manager & Profiles
+    pub mod_manager: ModManager,
     #[allow(dead_code)]
     pub profile_roots: Vec<PathBuf>,
     pub selected_root: Option<PathBuf>,
@@ -31,12 +32,13 @@ pub struct ModpackApp {
     pub mod_search: String,
     pub config_search: String,
 
-    // Metadata
+    // Metadata & Output
     pub pack_name: String,
     pub pack_version: String,
     pub pack_description: String,
     pub pack_website: String,
     pub custom_icon_path: Option<PathBuf>,
+    pub output_dir: PathBuf,
 
     // UI State
     pub active_tab: ActiveTab,
@@ -46,9 +48,24 @@ pub struct ModpackApp {
 
 impl Default for ModpackApp {
     fn default() -> Self {
-        let roots = get_default_profile_roots();
+        let r2_roots = get_r2modman_roots();
+        let gale_roots = get_gale_roots();
+
+        let (mod_manager, roots) = if !r2_roots.is_empty() {
+            (ModManager::R2Modman, r2_roots)
+        } else if !gale_roots.is_empty() {
+            (ModManager::Gale, gale_roots)
+        } else {
+            (ModManager::Custom, Vec::new())
+        };
+
         let selected_root = roots.first().cloned();
+        let default_output_dir = std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("dist");
+
         let mut app = Self {
+            mod_manager,
             profile_roots: roots,
             selected_root,
             available_profiles: Vec::new(),
@@ -62,6 +79,7 @@ impl Default for ModpackApp {
             pack_description: "A curated Valheim modpack with custom configurations".to_string(),
             pack_website: String::new(),
             custom_icon_path: None,
+            output_dir: default_output_dir,
             active_tab: ActiveTab::ProfileMetadata,
             status_message: None,
             last_build_result: None,
@@ -136,8 +154,8 @@ impl ModpackApp {
             selected_mods,
             selected_configs,
             custom_icon: self.custom_icon_path.clone(),
-            out_dir: PathBuf::from("./build"),
-            dist_dir: PathBuf::from("./dist"),
+            out_dir: self.output_dir.join("build"),
+            dist_dir: self.output_dir.clone(),
         };
 
         match build_modpack(&opts) {
@@ -223,7 +241,8 @@ impl eframe::App for ModpackApp {
                     ui.label(RichText::new(msg).color(color));
                 } else {
                     ui.label(RichText::new(format!(
-                        "Profile: {} | {} mods selected | {} configs selected",
+                        "Source: {} | Profile: {} | {} mods | {} configs",
+                        self.mod_manager.label(),
                         self.selected_profile,
                         self.mods.iter().filter(|m| m.selected).count(),
                         self.configs.iter().filter(|c| c.selected).count()
@@ -250,9 +269,32 @@ impl ModpackApp {
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(8.0);
             ui.group(|ui| {
-                ui.heading("📂 r2modman Profile Source");
+                ui.heading("📂 Mod Manager & Profile Source");
                 ui.separator();
 
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Mod Manager:").strong());
+
+                    if ui.selectable_label(self.mod_manager == ModManager::R2Modman, "r2modman").clicked() {
+                        self.mod_manager = ModManager::R2Modman;
+                        let roots = get_r2modman_roots();
+                        self.selected_root = roots.first().cloned();
+                        self.refresh_profiles();
+                    }
+
+                    if ui.selectable_label(self.mod_manager == ModManager::Gale, "Gale").clicked() {
+                        self.mod_manager = ModManager::Gale;
+                        let roots = get_gale_roots();
+                        self.selected_root = roots.first().cloned();
+                        self.refresh_profiles();
+                    }
+
+                    if ui.selectable_label(self.mod_manager == ModManager::Custom, "Custom Path").clicked() {
+                        self.mod_manager = ModManager::Custom;
+                    }
+                });
+
+                ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.label("Profiles Directory:");
                     let current_dir_display = self
@@ -265,6 +307,7 @@ impl ModpackApp {
                     if ui.button("Browse...").clicked() {
                         if let Some(folder) = rfd::FileDialog::new().pick_folder() {
                             self.selected_root = Some(folder);
+                            self.mod_manager = ModManager::Custom;
                             self.refresh_profiles();
                         }
                     }
@@ -304,9 +347,21 @@ impl ModpackApp {
             ui.add_space(12.0);
 
             ui.group(|ui| {
-                ui.heading("📝 Thunderstore Modpack Metadata");
+                ui.heading("📝 Thunderstore Modpack Metadata & Destination");
                 ui.separator();
 
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Output Directory:").strong());
+                    let out_display = self.output_dir.display().to_string();
+                    ui.monospace(out_display);
+                    if ui.button("Browse Output...").clicked() {
+                        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                            self.output_dir = folder;
+                        }
+                    }
+                });
+
+                ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.label("Package Name:");
                     let mut name = self.pack_name.clone();
@@ -539,9 +594,19 @@ impl ModpackApp {
                 let selected_configs_count = self.configs.iter().filter(|c| c.selected).count();
 
                 ui.label(RichText::new(format!("Package: {} v{}", self.pack_name, self.pack_version)).heading());
+                ui.label(format!("• Source: {} ({})", self.mod_manager.label(), self.selected_profile));
                 ui.label(format!("• Mods to include: {} dependencies", selected_mods_count));
                 ui.label(format!("• Configurations to include: {} files/folders", selected_configs_count));
-                ui.label(format!("• Target ZIP: ./dist/{}-{}.zip", self.pack_name, self.pack_version));
+
+                ui.horizontal(|ui| {
+                    ui.label(format!("• Output Directory: {}", self.output_dir.display()));
+                    if ui.button("Change...").clicked() {
+                        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                            self.output_dir = folder;
+                        }
+                    }
+                });
+                ui.label(format!("• Target ZIP: {}/{}-{}.zip", self.output_dir.display(), self.pack_name, self.pack_version));
 
                 ui.add_space(8.0);
                 if ui.button(RichText::new("✨ GENERATE MODPACK ZIP NOW ✨").heading().color(Color32::WHITE)).clicked() {
@@ -575,11 +640,16 @@ impl ModpackApp {
             ui.heading("📖 How to Distribute Your Modpack");
             ui.separator();
 
+            ui.label(RichText::new("Mod Manager Support:").strong());
+            ui.label("• Supports both r2modman and Gale profiles seamlessly.");
+            ui.label("• Switch between them on the 'Profile & Info' tab, or browse to any custom profile folder.");
+
+            ui.add_space(8.0);
             ui.label(RichText::new("Option 1: Upload to Thunderstore (Public or Unlisted)").strong());
             ui.label("1. Create an account on https://thunderstore.io/c/valheim/");
             ui.label("2. Click 'Upload' in the top-right header.");
-            ui.label("3. Select your community team, attach the generated .zip from dist/, and tag 'Modpacks'.");
-            ui.label("4. When players install it through r2modman, all mods and configs are downloaded automatically!");
+            ui.label("3. Select your community team, attach the generated .zip from your output folder, and tag 'Modpacks'.");
+            ui.label("4. When players install it through r2modman or Gale, all mods and configs are downloaded automatically!");
 
             ui.add_space(12.0);
             ui.label(RichText::new("Option 2: Direct Share with Friends").strong());

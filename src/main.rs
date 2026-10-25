@@ -2,9 +2,9 @@ mod app;
 mod packager;
 mod profile;
 
-use std::path::PathBuf;
 use app::ModpackApp;
 use eframe::egui;
+use std::path::PathBuf;
 
 fn ensure_desktop_integration() {
     #[cfg(target_os = "linux")]

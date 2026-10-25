@@ -34,6 +34,7 @@ in
     file
     squashfsTools
     appimage-run
+    pkgsCross.mingwW64.stdenv.cc
   ] ++ libraries;
 
   # Dynamic linker path for GUI crates (winit, eframe, glow)
