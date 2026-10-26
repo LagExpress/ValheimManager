@@ -1,9 +1,13 @@
 mod app;
+mod i18n;
 mod packager;
 mod profile;
+mod sftp;
+mod sync;
 
 use app::ModpackApp;
 use eframe::egui;
+#[cfg(target_os = "linux")]
 use std::path::PathBuf;
 
 fn ensure_desktop_integration() {
@@ -11,7 +15,11 @@ fn ensure_desktop_integration() {
     {
         if let Some(data_dir) = dirs::data_dir() {
             let apps_dir = data_dir.join("applications");
-            let icons_dir = data_dir.join("icons").join("hicolor").join("256x256").join("apps");
+            let icons_dir = data_dir
+                .join("icons")
+                .join("hicolor")
+                .join("256x256")
+                .join("apps");
             let _ = std::fs::create_dir_all(&apps_dir);
             let _ = std::fs::create_dir_all(&icons_dir);
 

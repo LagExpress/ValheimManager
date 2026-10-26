@@ -26,7 +26,7 @@ jobs:
       - name: Install Linux GUI Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev file
+          sudo apt-get install -y build-essential libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev pkg-config zlib1g-dev perl file
 
       - name: Build Release Binary
         run: cargo build --release

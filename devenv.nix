@@ -32,6 +32,9 @@ in
     jq
     curl
     file
+    perl
+    gnumake
+    zlib
     squashfsTools
     appimage-run
     pkgsCross.mingwW64.stdenv.cc

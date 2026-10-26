@@ -3,7 +3,7 @@ name = "valheim-modpack-studio"
 version = "1.0.0"
 edition = "2021"
 authors = ["Mateo"]
-description = "Cross-platform GUI for creating Valheim modpacks from r2modman profiles"
+description = "Cross-platform GUI for creating Valheim modpacks and syncing BepInEx files to dedicated servers"
 
 [dependencies]
 eframe = { version = "0.29", default-features = false, features = ["default_fonts", "wgpu", "wayland", "x11"] }
@@ -18,6 +18,17 @@ rfd = "0.15"
 dirs = "5.0"
 regex = "1.10"
 opener = { version = "0.7", features = ["reveal"] }
+sha2 = "0.10"
+glob = "0.3"
+
+[target.'cfg(unix)'.dependencies]
+ssh2 = { version = "0.9", features = ["vendored-openssl"] }
+
+[target.'cfg(windows)'.dependencies]
+ssh2 = "0.9"
+
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
 opt-level = 3
