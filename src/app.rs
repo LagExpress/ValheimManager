@@ -762,7 +762,9 @@ impl eframe::App for ModpackApp {
 
 impl ModpackApp {
     fn ui_profile_metadata(&mut self, ui: &mut Ui) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("profile_metadata_scroll")
+            .show(ui, |ui| {
             ui.add_space(8.0);
             ui.group(|ui| {
                 ui.heading(self.language.heading_mod_manager());
@@ -987,7 +989,9 @@ impl ModpackApp {
 
         let search = self.mod_search.to_lowercase();
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("mods_tab_scroll")
+            .show(ui, |ui| {
             egui::Grid::new("mods_table")
                 .striped(true)
                 .spacing([12.0, 6.0])
@@ -1093,7 +1097,9 @@ impl ModpackApp {
 
         let search = self.config_search.to_lowercase();
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("configs_tab_scroll")
+            .show(ui, |ui| {
             egui::Grid::new("configs_table")
                 .striped(true)
                 .spacing([12.0, 6.0])
@@ -1134,7 +1140,9 @@ impl ModpackApp {
     }
 
     fn ui_build_export(&mut self, ui: &mut Ui) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("build_export_scroll")
+            .show(ui, |ui| {
             ui.add_space(8.0);
             ui.group(|ui| {
                 ui.heading(self.language.heading_build());
@@ -1243,7 +1251,9 @@ impl ModpackApp {
     }
 
     fn ui_server_sync(&mut self, ui: &mut Ui) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("sync_tab_outer_scroll")
+            .show(ui, |ui| {
             ui.add_space(8.0);
             ui.heading(self.language.sync_title());
             ui.label(self.language.sync_desc());
@@ -1747,17 +1757,22 @@ impl ModpackApp {
                 if filtered.is_empty() {
                     ui.label(RichText::new(self.language.msg_no_changes_filter()).weak());
                 } else {
-                    egui::Frame::none()
+                    let frame_res = egui::Frame::none()
                         .fill(Color32::from_rgb(16, 18, 24))
                         .rounding(egui::Rounding::same(6.0))
                         .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(32, 36, 46)))
-                        .inner_margin(egui::Margin::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                         .show(ui, |ui| {
                             egui::ScrollArea::vertical()
-                                .max_height(220.0)
+                                .id_salt("sync_preview_changes_scroll")
+                                .max_height(180.0)
+                                .auto_shrink([false, true])
                                 .show(ui, |ui| {
+                                    ui.spacing_mut().item_spacing.y = 4.0;
+                                    ui.add_space(3.0);
                                     for (is_upload, path) in filtered {
                                         ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 6.0;
                                             if is_upload {
                                                 ui.label(
                                                     RichText::new(" + ADD ")
@@ -1778,10 +1793,10 @@ impl ModpackApp {
 
                                             // Path with dimmed directory and bold filename
                                             if let Some((dir, filename)) = path.rsplit_once('/') {
-                                                ui.label(RichText::new(format!("{}/", dir)).weak().monospace());
-                                                ui.label(RichText::new(filename).monospace().strong());
+                                                ui.label(RichText::new(format!("{}/", dir)).weak().monospace().size(12.0));
+                                                ui.label(RichText::new(filename).monospace().strong().size(12.0));
                                             } else {
-                                                ui.label(RichText::new(path.as_str()).monospace().strong());
+                                                ui.label(RichText::new(path.as_str()).monospace().strong().size(12.0));
                                             }
 
                                             // Category tag on the far right
@@ -1815,8 +1830,13 @@ impl ModpackApp {
                                             );
                                         });
                                     }
+                                    ui.add_space(3.0);
                                 });
                         });
+
+                    if ui.rect_contains_pointer(frame_res.response.rect) {
+                        ui.ctx().input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+                    }
                 }
             }
         });
@@ -2056,17 +2076,22 @@ impl ModpackApp {
                 if filtered_logs.is_empty() {
                     ui.label(RichText::new(self.language.no_logs_matching()).weak());
                 } else {
-                    egui::Frame::none()
+                    let frame_res = egui::Frame::none()
                         .fill(Color32::from_rgb(14, 16, 22))
                         .rounding(egui::Rounding::same(6.0))
                         .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(30, 34, 44)))
-                        .inner_margin(egui::Margin::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                         .show(ui, |ui| {
-                            let mut scroll = egui::ScrollArea::vertical().max_height(240.0);
+                            let mut scroll = egui::ScrollArea::vertical()
+                                .id_salt("sync_activity_logs_scroll")
+                                .max_height(220.0)
+                                .auto_shrink([false, false]);
                             if self.sync.log_autoscroll {
                                 scroll = scroll.stick_to_bottom(true);
                             }
                             scroll.show(ui, |ui| {
+                                ui.spacing_mut().item_spacing.y = 3.0;
+                                ui.add_space(3.0);
                                 for log in filtered_logs {
                                     ui.horizontal(|ui| {
                                         let (tag, tag_bg, tag_fg) = match log.level {
@@ -2116,15 +2141,22 @@ impl ModpackApp {
                                         );
                                     });
                                 }
+                                ui.add_space(3.0);
                             });
                         });
+
+                    if ui.rect_contains_pointer(frame_res.response.rect) {
+                        ui.ctx().input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+                    }
                 }
             }
         });
     }
 
     fn ui_help(&mut self, ui: &mut Ui) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("help_tab_scroll")
+            .show(ui, |ui| {
             ui.add_space(8.0);
             ui.heading(self.language.help_title());
             ui.separator();

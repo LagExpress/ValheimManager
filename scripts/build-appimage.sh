@@ -116,8 +116,10 @@ rm -f "$SQUASHFS_TMP"
 mksquashfs "$APPDIR" "$SQUASHFS_TMP" -root-owned -noappend -comp zstd
 
 OUTPUT_APPIMAGE="$DIST_DIR/ValheimModpackStudio-x86_64.AppImage"
-cat "$RUNTIME" "$SQUASHFS_TMP" > "$OUTPUT_APPIMAGE"
-chmod +x "$OUTPUT_APPIMAGE"
+TMP_APPIMAGE="$DIST_DIR/ValheimModpackStudio-x86_64.AppImage.tmp.$$"
+cat "$RUNTIME" "$SQUASHFS_TMP" > "$TMP_APPIMAGE"
+chmod +x "$TMP_APPIMAGE"
+mv -f "$TMP_APPIMAGE" "$OUTPUT_APPIMAGE"
 rm -f "$SQUASHFS_TMP"
 
 echo ""
