@@ -1562,111 +1562,149 @@ impl ModpackApp {
                 }
             };
 
-            // 1. Stat Cards Row
-            ui.horizontal_wrapped(|ui| {
-                // Uploads Badge Card
+            // 1. Stat Cards Row (Uniform columns spanning 100% width)
+            let (wrapper_status_text, wrapper_color) = match preview.wrapper.status {
+                WrapperStatus::Intact => (
+                    self.language.wrapper_intact(),
+                    Color32::from_rgb(90, 220, 90),
+                ),
+                WrapperStatus::ElfNeedsRename => (
+                    self.language.wrapper_rename_needed(),
+                    Color32::from_rgb(240, 180, 50),
+                ),
+                _ => (
+                    self.language.wrapper_missing(),
+                    Color32::from_rgb(240, 80, 80),
+                ),
+            };
+            let sym_text = if preview.wrapper.symlink_present {
+                self.language.symlink_ok()
+            } else {
+                self.language.symlink_missing()
+            };
+
+            let render_card = |ui: &mut Ui,
+                               bg: Color32,
+                               stroke: Color32,
+                               icon: &str,
+                               icon_color: Color32,
+                               title: &str,
+                               title_color: Color32,
+                               sub: &str| {
                 egui::Frame::group(ui.style())
                     .rounding(egui::Rounding::same(6.0))
-                    .fill(Color32::from_rgb(20, 36, 26))
-                    .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(45, 140, 75)))
-                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                    .fill(bg)
+                    .stroke(egui::Stroke::new(1.0_f32, stroke))
+                    .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                     .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.set_min_height(46.0);
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("⬆").size(24.0).color(Color32::from_rgb(90, 220, 110)));
+                            ui.label(RichText::new(icon).size(22.0).color(icon_color));
                             ui.vertical(|ui| {
                                 ui.label(
-                                    RichText::new(format!("{}", preview.uploads.len()))
-                                        .heading()
+                                    RichText::new(title)
                                         .strong()
-                                        .color(Color32::from_rgb(90, 220, 110)),
+                                        .size(15.0)
+                                        .color(title_color),
                                 );
-                                ui.label(RichText::new(self.language.badge_uploads()).small().weak());
+                                ui.label(RichText::new(sub).small().weak());
                             });
                         });
                     });
+            };
 
-                // Deletions Badge Card
-                egui::Frame::group(ui.style())
-                    .rounding(egui::Rounding::same(6.0))
-                    .fill(Color32::from_rgb(38, 22, 22))
-                    .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(180, 50, 50)))
-                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("🗑").size(24.0).color(Color32::from_rgb(240, 90, 90)));
-                            ui.vertical(|ui| {
-                                ui.label(
-                                    RichText::new(format!("{}", preview.deletions.len()))
-                                        .heading()
-                                        .strong()
-                                        .color(Color32::from_rgb(240, 90, 90)),
-                                );
-                                ui.label(RichText::new(self.language.badge_deletions()).small().weak());
-                            });
-                        });
-                    });
-
-                // File Counts Card
-                egui::Frame::group(ui.style())
-                    .rounding(egui::Rounding::same(6.0))
-                    .fill(Color32::from_rgb(24, 26, 32))
-                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("📁").size(24.0));
-                            ui.vertical(|ui| {
-                                ui.label(
-                                    RichText::new(format!("{}/{}", preview.local_count, preview.remote_count))
-                                        .heading()
-                                        .strong(),
-                                );
-                                ui.label(
-                                    RichText::new(format!(
-                                        "{} / {}",
-                                        self.language.badge_local(),
-                                        self.language.badge_remote()
-                                    ))
-                                    .small()
-                                    .weak(),
-                                );
-                            });
-                        });
-                    });
-
-                // Server Wrapper Card
-                egui::Frame::group(ui.style())
-                    .rounding(egui::Rounding::same(6.0))
-                    .fill(Color32::from_rgb(24, 26, 32))
-                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("🛡").size(24.0));
-                            ui.vertical(|ui| {
-                                let (status_text, status_color) = match preview.wrapper.status {
-                                    WrapperStatus::Intact => (
-                                        self.language.wrapper_intact(),
-                                        Color32::from_rgb(90, 220, 90),
-                                    ),
-                                    WrapperStatus::ElfNeedsRename => (
-                                        self.language.wrapper_rename_needed(),
-                                        Color32::from_rgb(240, 180, 50),
-                                    ),
-                                    _ => (
-                                        self.language.wrapper_missing(),
-                                        Color32::from_rgb(240, 80, 80),
-                                    ),
-                                };
-                                ui.label(RichText::new(status_text).strong().color(status_color));
-                                let sym_text = if preview.wrapper.symlink_present {
-                                    self.language.symlink_ok()
-                                } else {
-                                    self.language.symlink_missing()
-                                };
-                                ui.label(RichText::new(sym_text).small().weak());
-                            });
-                        });
-                    });
-            });
+            let avail_w = ui.available_width();
+            if avail_w >= 540.0 {
+                ui.columns(4, |cols| {
+                    render_card(
+                        &mut cols[0],
+                        Color32::from_rgb(20, 36, 26),
+                        Color32::from_rgb(45, 140, 75),
+                        "⬆",
+                        Color32::from_rgb(90, 220, 110),
+                        &format!("{}", preview.uploads.len()),
+                        Color32::from_rgb(90, 220, 110),
+                        self.language.badge_uploads(),
+                    );
+                    render_card(
+                        &mut cols[1],
+                        Color32::from_rgb(38, 22, 22),
+                        Color32::from_rgb(180, 50, 50),
+                        "🗑",
+                        Color32::from_rgb(240, 90, 90),
+                        &format!("{}", preview.deletions.len()),
+                        Color32::from_rgb(240, 90, 90),
+                        self.language.badge_deletions(),
+                    );
+                    render_card(
+                        &mut cols[2],
+                        Color32::from_rgb(24, 26, 32),
+                        Color32::from_rgb(45, 50, 65),
+                        "📁",
+                        Color32::WHITE,
+                        &format!("{}/{}", preview.local_count, preview.remote_count),
+                        Color32::WHITE,
+                        &format!("{}/{}", self.language.badge_local(), self.language.badge_remote()),
+                    );
+                    render_card(
+                        &mut cols[3],
+                        Color32::from_rgb(24, 26, 32),
+                        Color32::from_rgb(45, 50, 65),
+                        "🛡",
+                        Color32::WHITE,
+                        wrapper_status_text,
+                        wrapper_color,
+                        sym_text,
+                    );
+                });
+            } else {
+                ui.columns(2, |cols| {
+                    render_card(
+                        &mut cols[0],
+                        Color32::from_rgb(20, 36, 26),
+                        Color32::from_rgb(45, 140, 75),
+                        "⬆",
+                        Color32::from_rgb(90, 220, 110),
+                        &format!("{}", preview.uploads.len()),
+                        Color32::from_rgb(90, 220, 110),
+                        self.language.badge_uploads(),
+                    );
+                    render_card(
+                        &mut cols[1],
+                        Color32::from_rgb(38, 22, 22),
+                        Color32::from_rgb(180, 50, 50),
+                        "🗑",
+                        Color32::from_rgb(240, 90, 90),
+                        &format!("{}", preview.deletions.len()),
+                        Color32::from_rgb(240, 90, 90),
+                        self.language.badge_deletions(),
+                    );
+                });
+                ui.add_space(6.0);
+                ui.columns(2, |cols| {
+                    render_card(
+                        &mut cols[0],
+                        Color32::from_rgb(24, 26, 32),
+                        Color32::from_rgb(45, 50, 65),
+                        "📁",
+                        Color32::WHITE,
+                        &format!("{}/{}", preview.local_count, preview.remote_count),
+                        Color32::WHITE,
+                        &format!("{}/{}", self.language.badge_local(), self.language.badge_remote()),
+                    );
+                    render_card(
+                        &mut cols[1],
+                        Color32::from_rgb(24, 26, 32),
+                        Color32::from_rgb(45, 50, 65),
+                        "🛡",
+                        Color32::WHITE,
+                        wrapper_status_text,
+                        wrapper_color,
+                        sym_text,
+                    );
+                });
+            }
 
             // Warnings from wrapper (if any)
             for warning in &preview.wrapper.warnings {
@@ -1676,9 +1714,9 @@ impl ModpackApp {
 
             ui.add_space(8.0);
 
-            // 2. Interactive Changes Browser
+            // 2. Interactive Changes Browser (Tabs on Left, Search on Right)
             let all_count = preview.uploads.len() + preview.deletions.len();
-            ui.horizontal_wrapped(|ui| {
+            ui.horizontal(|ui| {
                 if ui
                     .selectable_label(
                         self.sync.preview_tab == PreviewTab::All,
@@ -1707,15 +1745,18 @@ impl ModpackApp {
                     self.sync.preview_tab = PreviewTab::Deletions;
                 }
 
-                if !self.sync.preview_search.is_empty() && ui.small_button("✕").clicked() {
-                    self.sync.preview_search.clear();
-                }
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.sync.preview_search)
-                        .hint_text(self.language.hint_search_changes())
-                        .desired_width(130.0),
-                );
-                ui.label("🔍");
+                // Search pinned to the right edge
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label("🔍");
+                    if !self.sync.preview_search.is_empty() && ui.small_button("✕").clicked() {
+                        self.sync.preview_search.clear();
+                    }
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.sync.preview_search)
+                            .hint_text(self.language.hint_search_changes())
+                            .desired_width(180.0),
+                    );
+                });
             });
 
             ui.add_space(4.0);
@@ -1976,76 +2017,80 @@ impl ModpackApp {
                 });
             });
 
-            // Filter chips & search row
-            ui.horizontal_wrapped(|ui| {
-                let is_all = self.sync.log_filter.is_none();
-                if ui
-                    .selectable_label(is_all, self.language.log_filter_all(total_logs))
-                    .clicked()
-                {
-                    self.sync.log_filter = None;
-                }
-
-                if err_count > 0 || self.sync.log_filter == Some(LogLevel::Error) {
-                    let is_err = self.sync.log_filter == Some(LogLevel::Error);
-                    let err_chip = RichText::new(self.language.log_filter_errors(err_count))
-                        .color(if err_count > 0 {
-                            Color32::from_rgb(255, 90, 90)
-                        } else {
-                            Color32::GRAY
-                        });
-                    if ui.selectable_label(is_err, err_chip).clicked() {
-                        self.sync.log_filter = if is_err { None } else { Some(LogLevel::Error) };
+            // Filter chips & search row (Chips on Left, Search on Right)
+            ui.horizontal(|ui| {
+                ui.horizontal(|ui| {
+                    let is_all = self.sync.log_filter.is_none();
+                    if ui
+                        .selectable_label(is_all, self.language.log_filter_all(total_logs))
+                        .clicked()
+                    {
+                        self.sync.log_filter = None;
                     }
-                }
 
-                if warn_count > 0 || self.sync.log_filter == Some(LogLevel::Warning) {
-                    let is_warn = self.sync.log_filter == Some(LogLevel::Warning);
-                    let warn_chip = RichText::new(self.language.log_filter_warnings(warn_count))
-                        .color(if warn_count > 0 {
-                            Color32::from_rgb(240, 180, 50)
-                        } else {
-                            Color32::GRAY
-                        });
-                    if ui.selectable_label(is_warn, warn_chip).clicked() {
-                        self.sync.log_filter = if is_warn {
+                    if err_count > 0 || self.sync.log_filter == Some(LogLevel::Error) {
+                        let is_err = self.sync.log_filter == Some(LogLevel::Error);
+                        let err_chip = RichText::new(self.language.log_filter_errors(err_count))
+                            .color(if err_count > 0 {
+                                Color32::from_rgb(255, 90, 90)
+                            } else {
+                                Color32::GRAY
+                            });
+                        if ui.selectable_label(is_err, err_chip).clicked() {
+                            self.sync.log_filter = if is_err { None } else { Some(LogLevel::Error) };
+                        }
+                    }
+
+                    if warn_count > 0 || self.sync.log_filter == Some(LogLevel::Warning) {
+                        let is_warn = self.sync.log_filter == Some(LogLevel::Warning);
+                        let warn_chip = RichText::new(self.language.log_filter_warnings(warn_count))
+                            .color(if warn_count > 0 {
+                                Color32::from_rgb(240, 180, 50)
+                            } else {
+                                Color32::GRAY
+                            });
+                        if ui.selectable_label(is_warn, warn_chip).clicked() {
+                            self.sync.log_filter = if is_warn {
+                                None
+                            } else {
+                                Some(LogLevel::Warning)
+                            };
+                        }
+                    }
+
+                    let is_succ = self.sync.log_filter == Some(LogLevel::Success);
+                    if ui
+                        .selectable_label(is_succ, self.language.log_filter_success(succ_count))
+                        .clicked()
+                    {
+                        self.sync.log_filter = if is_succ {
                             None
                         } else {
-                            Some(LogLevel::Warning)
+                            Some(LogLevel::Success)
                         };
                     }
-                }
 
-                let is_succ = self.sync.log_filter == Some(LogLevel::Success);
-                if ui
-                    .selectable_label(is_succ, self.language.log_filter_success(succ_count))
-                    .clicked()
-                {
-                    self.sync.log_filter = if is_succ {
-                        None
-                    } else {
-                        Some(LogLevel::Success)
-                    };
-                }
+                    let is_info = self.sync.log_filter == Some(LogLevel::Info);
+                    if ui
+                        .selectable_label(is_info, self.language.log_filter_info(info_count))
+                        .clicked()
+                    {
+                        self.sync.log_filter = if is_info { None } else { Some(LogLevel::Info) };
+                    }
+                });
 
-                let is_info = self.sync.log_filter == Some(LogLevel::Info);
-                if ui
-                    .selectable_label(is_info, self.language.log_filter_info(info_count))
-                    .clicked()
-                {
-                    self.sync.log_filter = if is_info { None } else { Some(LogLevel::Info) };
-                }
-
-                // Search
-                if !self.sync.log_search.is_empty() && ui.small_button("✕").clicked() {
-                    self.sync.log_search.clear();
-                }
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.sync.log_search)
-                        .hint_text(self.language.hint_search_logs())
-                        .desired_width(120.0),
-                );
-                ui.label("🔍");
+                // Search pinned to the right edge
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label("🔍");
+                    if !self.sync.log_search.is_empty() && ui.small_button("✕").clicked() {
+                        self.sync.log_search.clear();
+                    }
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.sync.log_search)
+                            .hint_text(self.language.hint_search_logs())
+                            .desired_width(180.0),
+                    );
+                });
             });
 
             ui.separator();

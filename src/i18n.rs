@@ -811,8 +811,8 @@ impl Language {
 
     pub fn hint_search_changes(&self) -> &'static str {
         match self {
-            Language::English => "Filter changed files...",
-            Language::Spanish => "Filtrar archivos modificados...",
+            Language::English => "Filter changes...",
+            Language::Spanish => "Filtrar cambios...",
         }
     }
 
