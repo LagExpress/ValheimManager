@@ -386,6 +386,27 @@ impl Language {
         }
     }
 
+    pub fn compiling_modpack(&self) -> &'static str {
+        match self {
+            Language::English => "Compiling Modpack Archive...",
+            Language::Spanish => "Compilando Archivo del Modpack...",
+        }
+    }
+
+    pub fn building_button_label(&self) -> &'static str {
+        match self {
+            Language::English => "Building...",
+            Language::Spanish => "Compilando...",
+        }
+    }
+
+    pub fn placeholder_no_preview(&self) -> &'static str {
+        match self {
+            Language::English => "🔍 Click \"Preview Changes\" on the left to inspect pending uploads, deletions, and server wrapper status.",
+            Language::Spanish => "🔍 Haz clic en \"Vista Previa de Cambios\" a la izquierda para inspeccionar subidas, eliminaciones y el estado del wrapper.",
+        }
+    }
+
     pub fn heading_build_results(&self) -> &'static str {
         match self {
             Language::English => "Build Result",

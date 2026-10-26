@@ -93,10 +93,17 @@ pub fn generate_readme(
     readme
 }
 
-pub fn build_modpack(opts: &ModpackOptions) -> Result<BuildResult, String> {
+pub fn build_modpack(
+    opts: &ModpackOptions,
+    on_progress: Option<&dyn Fn(f32, &str)>,
+) -> Result<BuildResult, String> {
     let clean_name = opts.name.trim().replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
     if clean_name.is_empty() {
         return Err("Modpack name cannot be empty".to_string());
+    }
+
+    if let Some(cb) = on_progress {
+        cb(0.02, "Preparing build workspace...");
     }
 
     let build_folder = opts.out_dir.join(&clean_name);
@@ -112,6 +119,9 @@ pub fn build_modpack(opts: &ModpackOptions) -> Result<BuildResult, String> {
         .map_err(|e| format!("Failed to create dist folder: {}", e))?;
 
     // 1. Write manifest.json
+    if let Some(cb) = on_progress {
+        cb(0.06, "Creating manifest.json...");
+    }
     let manifest = ManifestJson {
         name: clean_name.clone(),
         version_number: opts.version.trim().to_string(),
@@ -130,6 +140,9 @@ pub fn build_modpack(opts: &ModpackOptions) -> Result<BuildResult, String> {
         .map_err(|e| format!("Failed to write manifest.json: {}", e))?;
 
     // 2. Write README.md
+    if let Some(cb) = on_progress {
+        cb(0.12, "Generating README.md with mod list...");
+    }
     let readme_content = generate_readme(
         &clean_name,
         opts.version.trim(),
@@ -141,6 +154,9 @@ pub fn build_modpack(opts: &ModpackOptions) -> Result<BuildResult, String> {
         .map_err(|e| format!("Failed to write README.md: {}", e))?;
 
     // 3. Write icon.png (256x256)
+    if let Some(cb) = on_progress {
+        cb(0.18, "Processing modpack icon...");
+    }
     let icon_dest = build_folder.join("icon.png");
     if let Some(ref custom_path) = opts.custom_icon {
         if custom_path.exists() {
@@ -160,7 +176,12 @@ pub fn build_modpack(opts: &ModpackOptions) -> Result<BuildResult, String> {
     std::fs::create_dir_all(&config_dest)
         .map_err(|e| format!("Failed to create config directory: {}", e))?;
 
-    for item in &opts.selected_configs {
+    let total_configs = opts.selected_configs.len();
+    for (idx, item) in opts.selected_configs.iter().enumerate() {
+        if let Some(cb) = on_progress {
+            let frac = 0.20 + 0.38 * ((idx + 1) as f32 / total_configs.max(1) as f32);
+            cb(frac, &format!("Copying config ({}/{}): {}", idx + 1, total_configs, item.name));
+        }
         let target = config_dest.join(&item.name);
         if item.is_dir {
             copy_dir_filtered(&item.path, &target)?;
@@ -173,7 +194,14 @@ pub fn build_modpack(opts: &ModpackOptions) -> Result<BuildResult, String> {
     }
 
     // 5. Create ZIP archive with pure Rust `zip` crate
-    create_zip_archive(&build_folder, &zip_path)?;
+    if let Some(cb) = on_progress {
+        cb(0.60, "Creating ZIP archive...");
+    }
+    create_zip_archive(&build_folder, &zip_path, on_progress)?;
+
+    if let Some(cb) = on_progress {
+        cb(1.0, "Modpack built successfully!");
+    }
 
     let zip_size_bytes = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
 
@@ -226,7 +254,11 @@ fn copy_dir_filtered(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn create_zip_archive(src_dir: &Path, out_zip: &Path) -> Result<(), String> {
+fn create_zip_archive(
+    src_dir: &Path,
+    out_zip: &Path,
+    on_progress: Option<&dyn Fn(f32, &str)>,
+) -> Result<(), String> {
     let file = File::create(out_zip)
         .map_err(|e| format!("Failed to create zip file {}: {}", out_zip.display(), e))?;
     let mut zip = ZipWriter::new(file);
@@ -237,12 +269,16 @@ fn create_zip_archive(src_dir: &Path, out_zip: &Path) -> Result<(), String> {
 
     let mut buffer = Vec::new();
 
-    for entry in WalkDir::new(src_dir).into_iter().filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path == src_dir {
-            continue;
-        }
+    let entries: Vec<_> = WalkDir::new(src_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path() != src_dir)
+        .collect();
 
+    let total = entries.len();
+
+    for (idx, entry) in entries.into_iter().enumerate() {
+        let path = entry.path();
         let relative_path = path
             .strip_prefix(src_dir)
             .map_err(|e| format!("Strip prefix failed: {}", e))?;
@@ -250,6 +286,11 @@ fn create_zip_archive(src_dir: &Path, out_zip: &Path) -> Result<(), String> {
         let name = relative_path
             .to_string_lossy()
             .replace('\\', "/"); // Ensure unix path separators inside zip
+
+        if let Some(cb) = on_progress {
+            let frac = 0.60 + 0.38 * ((idx + 1) as f32 / total.max(1) as f32);
+            cb(frac, &format!("Compressing: {}", name));
+        }
 
         if path.is_dir() {
             zip.add_directory(&name, options)

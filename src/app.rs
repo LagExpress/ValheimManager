@@ -148,8 +148,18 @@ pub struct ModpackApp {
     pub status_message: Option<(String, bool)>, // (message, is_error)
     pub last_build_result: Option<BuildResult>,
 
+    // Compiling / Build Progress State
+    pub building: bool,
+    pub build_progress: Option<(f32, String)>,
+    pub build_receiver: Option<Receiver<BuildEvent>>,
+
     // Server Sync
     pub sync: SyncUiState,
+}
+
+pub enum BuildEvent {
+    Progress(f32, String),
+    Finished(Result<BuildResult, String>),
 }
 
 impl Default for ModpackApp {
@@ -193,6 +203,9 @@ impl Default for ModpackApp {
             active_tab: ActiveTab::ProfileMetadata,
             status_message: None,
             last_build_result: None,
+            building: false,
+            build_progress: None,
+            build_receiver: None,
             sync,
         };
 
@@ -242,7 +255,11 @@ impl ModpackApp {
         }
     }
 
-    pub fn trigger_build(&mut self) {
+    pub fn trigger_build(&mut self, ctx: &egui::Context) {
+        if self.building {
+            return;
+        }
+
         let clean_name = self
             .pack_name
             .trim()
@@ -281,26 +298,22 @@ impl ModpackApp {
             dist_dir: self.output_dir.clone(),
         };
 
-        match build_modpack(&opts) {
-            Ok(result) => {
-                let size_kb = (result.zip_size_bytes as f64) / 1024.0;
-                self.status_message = Some((
-                    format!(
-                        "Successfully built {} ({:.1} KB) with {} mods and {} configs!",
-                        result.zip_path.display(),
-                        size_kb,
-                        result.mod_count,
-                        result.config_count
-                    ),
-                    false,
-                ));
-                self.last_build_result = Some(result);
-                self.active_tab = ActiveTab::Build;
-            }
-            Err(e) => {
-                self.status_message = Some((format!("Build failed: {}", e), true));
-            }
-        }
+        self.building = true;
+        self.build_progress = Some((0.02, "Starting build...".to_string()));
+        self.active_tab = ActiveTab::Build;
+
+        let (tx, rx) = mpsc::channel();
+        self.build_receiver = Some(rx);
+        let repaint_ctx = ctx.clone();
+
+        std::thread::spawn(move || {
+            let res = build_modpack(&opts, Some(&|fraction, message| {
+                let _ = tx.send(BuildEvent::Progress(fraction, message.to_string()));
+                repaint_ctx.request_repaint();
+            }));
+            let _ = tx.send(BuildEvent::Finished(res));
+            repaint_ctx.request_repaint();
+        });
     }
 
     fn sync_source_bepinex(&self) -> Option<PathBuf> {
@@ -353,6 +366,62 @@ impl ModpackApp {
             self.sync.cancel = None;
             self.sync.receiver = None;
             self.sync.progress = None;
+        }
+    }
+
+    fn poll_build_events(&mut self) {
+        let mut events = Vec::new();
+        let mut disconnected = false;
+
+        if let Some(receiver) = &self.build_receiver {
+            loop {
+                match receiver.try_recv() {
+                    Ok(event) => events.push(event),
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        for event in events {
+            match event {
+                BuildEvent::Progress(fraction, msg) => {
+                    self.build_progress = Some((fraction, msg));
+                }
+                BuildEvent::Finished(result) => {
+                    self.building = false;
+                    self.build_receiver = None;
+                    match result {
+                        Ok(res) => {
+                            self.build_progress = Some((1.0, "Complete!".to_string()));
+                            let size_kb = (res.zip_size_bytes as f64) / 1024.0;
+                            self.status_message = Some((
+                                format!(
+                                    "Successfully built {} ({:.1} KB) with {} mods and {} configs!",
+                                    res.zip_path.display(),
+                                    size_kb,
+                                    res.mod_count,
+                                    res.config_count
+                                ),
+                                false,
+                            ));
+                            self.last_build_result = Some(res);
+                        }
+                        Err(e) => {
+                            self.build_progress = None;
+                            self.status_message = Some((format!("Build failed: {}", e), true));
+                        }
+                    }
+                }
+            }
+        }
+
+        if disconnected {
+            self.building = false;
+            self.build_receiver = None;
         }
     }
 
@@ -545,6 +614,7 @@ impl eframe::App for ModpackApp {
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
 
         self.poll_sync_events();
+        self.poll_build_events();
 
         // Top Navigation Bar
         egui::TopBottomPanel::top("top_header").show(ctx, |ui| {
@@ -582,7 +652,26 @@ impl eframe::App for ModpackApp {
                             let _ = opener::reveal(&res.zip_path);
                         }
                     }
-                    if ui
+
+                    if self.building {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            if let Some((frac, ref msg)) = self.build_progress {
+                                ui.label(
+                                    RichText::new(format!("{:.0}%", frac * 100.0))
+                                        .strong()
+                                        .color(Color32::from_rgb(230, 180, 50)),
+                                )
+                                .on_hover_text(msg);
+                            } else {
+                                ui.label(
+                                    RichText::new(self.language.building_button_label())
+                                        .strong()
+                                        .color(Color32::from_rgb(230, 180, 50)),
+                                );
+                            }
+                        });
+                    } else if ui
                         .button(
                             RichText::new(self.language.btn_build_quick())
                                 .strong()
@@ -591,7 +680,7 @@ impl eframe::App for ModpackApp {
                         .on_hover_text("Build Thunderstore zip archive now")
                         .clicked()
                     {
-                        self.trigger_build();
+                        self.trigger_build(ctx);
                     }
                 });
             });
@@ -1091,7 +1180,32 @@ impl ModpackApp {
                 ));
 
                 ui.add_space(8.0);
-                if ui
+                if self.building {
+                    let (frac, msg) = self
+                        .build_progress
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or((0.0, String::new()));
+                    ui.label(
+                        RichText::new(self.language.compiling_modpack())
+                            .strong()
+                            .color(Color32::from_rgb(230, 180, 50)),
+                    );
+                    let progress_bar = egui::ProgressBar::new(frac)
+                        .show_percentage()
+                        .animate(true)
+                        .text(format!("{:.0}% - {}", frac * 100.0, msg));
+                    ui.add(progress_bar);
+                    ui.add_space(6.0);
+                    let _ = ui.add_enabled(
+                        false,
+                        egui::Button::new(
+                            RichText::new(self.language.building_button_label())
+                                .heading()
+                                .color(Color32::LIGHT_GRAY),
+                        ),
+                    );
+                } else if ui
                     .button(
                         RichText::new(self.language.btn_build_main())
                             .heading()
@@ -1099,7 +1213,7 @@ impl ModpackApp {
                     )
                     .clicked()
                 {
-                    self.trigger_build();
+                    self.trigger_build(ui.ctx());
                 }
             });
 
@@ -1144,264 +1258,299 @@ impl ModpackApp {
                 });
             }
 
-            let source = self.sync_source_bepinex();
-            ui.add_space(8.0);
-            ui.group(|ui| {
-                ui.heading(self.language.heading_source_profile());
-                ui.separator();
-                match source {
-                    Some(ref path) => {
-                        ui.label(format!("Profile BepInEx: {}", path.display()));
-                        if path.is_dir() {
-                            ui.colored_label(
-                                Color32::from_rgb(90, 220, 90),
-                                self.language.source_folder_found(),
-                            );
-                        } else {
-                            ui.colored_label(
-                                Color32::from_rgb(220, 90, 90),
-                                self.language.source_folder_missing(),
-                            );
-                        }
-                    }
-                    None => {
+            ui.add_space(10.0);
+            let avail_width = ui.available_width();
+            if avail_width > 860.0 {
+                ui.columns(2, |columns| {
+                    self.ui_sync_left_column(&mut columns[0]);
+                    self.ui_sync_right_column(&mut columns[1]);
+                });
+            } else {
+                self.ui_sync_left_column(ui);
+                ui.add_space(12.0);
+                self.ui_sync_right_column(ui);
+            }
+        });
+    }
+
+    fn ui_sync_left_column(&mut self, ui: &mut Ui) {
+        let source = self.sync_source_bepinex();
+        ui.group(|ui| {
+            ui.heading(self.language.heading_source_profile());
+            ui.separator();
+            match source {
+                Some(ref path) => {
+                    ui.label(format!("Profile BepInEx: {}", path.display()));
+                    if path.is_dir() {
+                        ui.colored_label(
+                            Color32::from_rgb(90, 220, 90),
+                            self.language.source_folder_found(),
+                        );
+                    } else {
                         ui.colored_label(
                             Color32::from_rgb(220, 90, 90),
-                            self.language.no_profile_selected(),
+                            self.language.source_folder_missing(),
                         );
                     }
                 }
+                None => {
+                    ui.colored_label(
+                        Color32::from_rgb(220, 90, 90),
+                        self.language.no_profile_selected(),
+                    );
+                }
+            }
+        });
+
+        ui.add_space(10.0);
+        ui.group(|ui| {
+            ui.heading(self.language.heading_connection());
+            ui.separator();
+            egui::Grid::new("sync_connection_grid")
+                .num_columns(2)
+                .spacing([10.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label(self.language.label_host());
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.sync.config.host)
+                            .desired_width(190.0)
+                            .hint_text("example.com or 192.168.1.10"),
+                    );
+                    ui.end_row();
+
+                    ui.label(self.language.label_port());
+                    ui.add(
+                        egui::DragValue::new(&mut self.sync.config.port)
+                            .range(1..=65535),
+                    );
+                    ui.end_row();
+
+                    ui.label(self.language.label_username());
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.sync.config.username)
+                            .desired_width(190.0),
+                    );
+                    ui.end_row();
+
+                    ui.label(self.language.label_password());
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.sync.config.password)
+                                .password(!self.sync.show_password)
+                                .desired_width(110.0),
+                        );
+                        ui.checkbox(&mut self.sync.show_password, self.language.label_show_password());
+                    });
+                    ui.end_row();
+
+                    ui.label(self.language.label_staging_dir());
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.sync.config.staging_dir)
+                                .desired_width(130.0),
+                        );
+                        if ui.button(self.language.btn_browse()).clicked() {
+                            if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                                self.sync.config.staging_dir = folder.display().to_string();
+                                self.sync.reload_ignore();
+                            }
+                        }
+                    });
+                    ui.end_row();
+                });
+
+            ui.add_space(4.0);
+            ui.checkbox(
+                &mut self.sync.config.auto_refresh_staging,
+                self.language.chk_auto_refresh(),
+            );
+            ui.label(
+                RichText::new(self.language.desc_auto_refresh())
+                    .weak(),
+            );
+
+            ui.add_space(6.0);
+            if ui.button(self.language.btn_save_settings()).clicked() {
+                match self.sync.persist() {
+                    Ok(()) => {
+                        self.status_message =
+                            Some(("Server sync settings saved.".to_string(), false));
+                    }
+                    Err(e) => self.sync_error(format!("Could not save settings: {}", e)),
+                }
+            }
+        });
+
+        ui.add_space(10.0);
+        ui.group(|ui| {
+            ui.heading(self.language.heading_actions());
+            ui.separator();
+
+            let running = self.sync.running;
+            ui.add_enabled_ui(!running, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .button(self.language.btn_action_preview())
+                        .on_hover_text(self.language.tip_action_preview())
+                        .clicked()
+                    {
+                        self.start_sync(SyncMode::Preview, ui.ctx());
+                    }
+                    if ui
+                        .button(self.language.btn_action_sync())
+                        .on_hover_text(self.language.tip_action_sync())
+                        .clicked()
+                    {
+                        self.start_sync(SyncMode::SyncChanges, ui.ctx());
+                    }
+                    if ui
+                        .button(self.language.btn_action_force())
+                        .on_hover_text(self.language.tip_action_force())
+                        .clicked()
+                    {
+                        self.start_sync(SyncMode::ForceAll, ui.ctx());
+                    }
+                    if ui
+                        .button(self.language.btn_action_upload_only())
+                        .on_hover_text(self.language.tip_action_upload_only())
+                        .clicked()
+                    {
+                        self.start_sync(SyncMode::UploadOnly, ui.ctx());
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .button(self.language.btn_action_wrapper())
+                        .on_hover_text(self.language.tip_action_wrapper())
+                        .clicked()
+                    {
+                        self.start_sync(SyncMode::CheckWrapper, ui.ctx());
+                    }
+                    if ui
+                        .button(self.language.btn_action_refresh())
+                        .on_hover_text(self.language.tip_action_refresh())
+                        .clicked()
+                    {
+                        self.start_sync(SyncMode::RefreshStaging, ui.ctx());
+                    }
+                    if ui
+                        .button(self.language.btn_action_test())
+                        .on_hover_text(self.language.tip_action_test())
+                        .clicked()
+                    {
+                        self.start_sync(SyncMode::TestConnection, ui.ctx());
+                    }
+                });
             });
 
-            ui.add_space(12.0);
-            ui.group(|ui| {
-                ui.heading(self.language.heading_connection());
-                ui.separator();
-                egui::Grid::new("sync_connection_grid")
-                    .num_columns(2)
-                    .spacing([12.0, 6.0])
-                    .show(ui, |ui| {
-                        ui.label(self.language.label_host());
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.sync.config.host)
-                                .desired_width(320.0)
-                                .hint_text("example.com or 192.168.1.10"),
-                        );
-                        ui.end_row();
-
-                        ui.label(self.language.label_port());
-                        ui.add(
-                            egui::DragValue::new(&mut self.sync.config.port)
-                                .range(1..=65535),
-                        );
-                        ui.end_row();
-
-                        ui.label(self.language.label_username());
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.sync.config.username)
-                                .desired_width(320.0),
-                        );
-                        ui.end_row();
-
-                        ui.label(self.language.label_password());
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.sync.config.password)
-                                    .password(!self.sync.show_password)
-                                    .desired_width(320.0),
-                            );
-                            ui.checkbox(&mut self.sync.show_password, self.language.label_show_password());
-                        });
-                        ui.end_row();
-
-                        ui.label(self.language.label_staging_dir());
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.sync.config.staging_dir)
-                                    .desired_width(320.0),
-                            );
-                            if ui.button(self.language.btn_browse()).clicked() {
-                                if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                                    self.sync.config.staging_dir = folder.display().to_string();
-                                    self.sync.reload_ignore();
-                                }
-                            }
-                        });
-                        ui.end_row();
-                    });
-
+            if running {
                 ui.add_space(4.0);
-                ui.checkbox(
-                    &mut self.sync.config.auto_refresh_staging,
-                    self.language.chk_auto_refresh(),
-                );
-                ui.label(
-                    RichText::new(self.language.desc_auto_refresh())
-                        .weak(),
-                );
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Sync running...");
+                    let cancellable = matches!(
+                        self.sync.active_mode,
+                        Some(SyncMode::SyncChanges | SyncMode::ForceAll | SyncMode::UploadOnly)
+                    );
+                    if cancellable {
+                        if let Some(cancel) = &self.sync.cancel {
+                            if ui.button("⏹ Cancel").clicked() {
+                                cancel.store(true, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                });
+            }
 
-                ui.add_space(6.0);
-                if ui.button(self.language.btn_save_settings()).clicked() {
+            if let Some(progress) = &self.sync.progress {
+                let fraction = if progress.total == 0 {
+                    0.0
+                } else {
+                    progress.current as f32 / progress.total as f32
+                };
+                ui.add(
+                    egui::ProgressBar::new(fraction).text(format!(
+                        "{} ({}/{})",
+                        progress.label, progress.current, progress.total
+                    )),
+                );
+            }
+        });
+
+        ui.add_space(10.0);
+        ui.group(|ui| {
+            ui.heading(self.language.heading_ignore());
+            ui.label(self.language.desc_ignore());
+            ui.add(
+                egui::TextEdit::multiline(&mut self.sync.ignore_text)
+                    .desired_rows(6)
+                    .desired_width(f32::INFINITY)
+                    .code_editor(),
+            );
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(self.language.btn_reset_defaults()).clicked() {
+                    self.sync.ignore_text = format!(
+                        "{}\n",
+                        DEFAULT_IGNORED_PATTERNS.join("\n")
+                    );
+                }
+                if ui.button(self.language.btn_reload_staging()).clicked() {
+                    self.sync.reload_ignore();
+                }
+                if ui.button(self.language.btn_save_ignore()).clicked() {
                     match self.sync.persist() {
                         Ok(()) => {
                             self.status_message =
-                                Some(("Server sync settings saved.".to_string(), false));
+                                Some(("Ignore file saved.".to_string(), false));
                         }
-                        Err(e) => self.sync_error(format!("Could not save settings: {}", e)),
+                        Err(e) => self.sync_error(format!("Could not save ignore file: {}", e)),
                     }
                 }
             });
-
-            ui.add_space(12.0);
-            ui.group(|ui| {
-                ui.heading(self.language.heading_ignore());
-                ui.label(self.language.desc_ignore());
-                ui.add(
-                    egui::TextEdit::multiline(&mut self.sync.ignore_text)
-                        .desired_rows(7)
-                        .desired_width(f32::INFINITY)
-                        .code_editor(),
-                );
-                ui.horizontal(|ui| {
-                    if ui.button(self.language.btn_reset_defaults()).clicked() {
-                        self.sync.ignore_text = format!(
-                            "{}\n",
-                            DEFAULT_IGNORED_PATTERNS.join("\n")
-                        );
-                    }
-                    if ui.button(self.language.btn_reload_staging()).clicked() {
-                        self.sync.reload_ignore();
-                    }
-                    if ui.button(self.language.btn_save_ignore()).clicked() {
-                        match self.sync.persist() {
-                            Ok(()) => {
-                                self.status_message =
-                                    Some(("Ignore file saved.".to_string(), false));
-                            }
-                            Err(e) => self.sync_error(format!("Could not save ignore file: {}", e)),
-                        }
-                    }
-                });
-            });
-
-            ui.add_space(12.0);
-            ui.group(|ui| {
-                ui.heading(self.language.heading_actions());
-                ui.separator();
-
-                let running = self.sync.running;
-                ui.add_enabled_ui(!running, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        if ui
-                            .button(self.language.btn_action_preview())
-                            .on_hover_text(self.language.tip_action_preview())
-                            .clicked()
-                        {
-                            self.start_sync(SyncMode::Preview, ui.ctx());
-                        }
-                        if ui
-                            .button(self.language.btn_action_sync())
-                            .on_hover_text(self.language.tip_action_sync())
-                            .clicked()
-                        {
-                            self.start_sync(SyncMode::SyncChanges, ui.ctx());
-                        }
-                        if ui
-                            .button(self.language.btn_action_force())
-                            .on_hover_text(self.language.tip_action_force())
-                            .clicked()
-                        {
-                            self.start_sync(SyncMode::ForceAll, ui.ctx());
-                        }
-                        if ui
-                            .button(self.language.btn_action_upload_only())
-                            .on_hover_text(self.language.tip_action_upload_only())
-                            .clicked()
-                        {
-                            self.start_sync(SyncMode::UploadOnly, ui.ctx());
-                        }
-                    });
-                    ui.horizontal_wrapped(|ui| {
-                        if ui
-                            .button(self.language.btn_action_wrapper())
-                            .on_hover_text(self.language.tip_action_wrapper())
-                            .clicked()
-                        {
-                            self.start_sync(SyncMode::CheckWrapper, ui.ctx());
-                        }
-                        if ui
-                            .button(self.language.btn_action_refresh())
-                            .on_hover_text(self.language.tip_action_refresh())
-                            .clicked()
-                        {
-                            self.start_sync(SyncMode::RefreshStaging, ui.ctx());
-                        }
-                        if ui
-                            .button(self.language.btn_action_test())
-                            .on_hover_text(self.language.tip_action_test())
-                            .clicked()
-                        {
-                            self.start_sync(SyncMode::TestConnection, ui.ctx());
-                        }
-                    });
-                });
-
-                if running {
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label("Sync running...");
-                        let cancellable = matches!(
-                            self.sync.active_mode,
-                            Some(SyncMode::SyncChanges | SyncMode::ForceAll | SyncMode::UploadOnly)
-                        );
-                        if cancellable {
-                            if let Some(cancel) = &self.sync.cancel {
-                                if ui.button("⏹ Cancel").clicked() {
-                                    cancel.store(true, Ordering::Relaxed);
-                                }
-                            }
-                        }
-                    });
-                }
-
-                if let Some(progress) = &self.sync.progress {
-                    let fraction = if progress.total == 0 {
-                        0.0
-                    } else {
-                        progress.current as f32 / progress.total as f32
-                    };
-                    ui.add(
-                        egui::ProgressBar::new(fraction).text(format!(
-                            "{} ({}/{})",
-                            progress.label, progress.current, progress.total
-                        )),
-                    );
-                }
-            });
-
-            // Modern Preview Section (UI/UX Redesign)
-            self.ui_sync_preview_dashboard(ui);
-
-            // Modern Execution Summary (UI/UX Redesign)
-            self.ui_sync_execution_summary(ui);
-
-            // Modern Terminal Logs Console (UI/UX Redesign)
-            self.ui_sync_logs_console(ui);
         });
+    }
+
+    fn ui_sync_right_column(&mut self, ui: &mut Ui) {
+        // Modern Preview Section (UI/UX Redesign - square)
+        self.ui_sync_preview_dashboard(ui);
+
+        // Modern Execution Summary (UI/UX Redesign)
+        self.ui_sync_execution_summary(ui);
+
+        // Modern Terminal Logs Console (UI/UX Redesign - square)
+        self.ui_sync_logs_console(ui);
     }
 
     // Modern Preview Dashboard: Stat Tiles & Interactive Changes Browser
     fn ui_sync_preview_dashboard(&mut self, ui: &mut Ui) {
-        let preview = match &self.sync.preview {
-            Some(p) => p.clone(),
-            None => return,
-        };
-
-        ui.add_space(12.0);
         ui.group(|ui| {
             ui.heading(self.language.heading_preview());
             ui.separator();
+
+            let preview = match &self.sync.preview {
+                Some(p) => p.clone(),
+                None => {
+                    egui::Frame::none()
+                        .fill(Color32::from_rgb(20, 22, 28))
+                        .rounding(egui::Rounding::same(6.0))
+                        .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 54)))
+                        .inner_margin(egui::Margin::same(16.0))
+                        .show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(8.0);
+                                ui.label(RichText::new("🔍").size(28.0));
+                                ui.add_space(4.0);
+                                ui.label(
+                                    RichText::new(self.language.placeholder_no_preview())
+                                        .weak()
+                                        .size(13.0),
+                                );
+                                ui.add_space(8.0);
+                            });
+                        });
+                    return;
+                }
+            };
 
             // 1. Stat Cards Row
             ui.horizontal_wrapped(|ui| {
@@ -1519,7 +1668,7 @@ impl ModpackApp {
 
             // 2. Interactive Changes Browser
             let all_count = preview.uploads.len() + preview.deletions.len();
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if ui
                     .selectable_label(
                         self.sync.preview_tab == PreviewTab::All,
@@ -1548,17 +1697,15 @@ impl ModpackApp {
                     self.sync.preview_tab = PreviewTab::Deletions;
                 }
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if !self.sync.preview_search.is_empty() && ui.small_button("✕").clicked() {
-                        self.sync.preview_search.clear();
-                    }
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.sync.preview_search)
-                            .hint_text(self.language.hint_search_changes())
-                            .desired_width(220.0),
-                    );
-                    ui.label("🔍");
-                });
+                if !self.sync.preview_search.is_empty() && ui.small_button("✕").clicked() {
+                    self.sync.preview_search.clear();
+                }
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.sync.preview_search)
+                        .hint_text(self.language.hint_search_changes())
+                        .desired_width(130.0),
+                );
+                ui.label("🔍");
             });
 
             ui.add_space(4.0);
@@ -1810,7 +1957,7 @@ impl ModpackApp {
             });
 
             // Filter chips & search row
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 let is_all = self.sync.log_filter.is_none();
                 if ui
                     .selectable_label(is_all, self.language.log_filter_all(total_logs))
@@ -1870,17 +2017,15 @@ impl ModpackApp {
                 }
 
                 // Search
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if !self.sync.log_search.is_empty() && ui.small_button("✕").clicked() {
-                        self.sync.log_search.clear();
-                    }
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.sync.log_search)
-                            .hint_text(self.language.hint_search_logs())
-                            .desired_width(180.0),
-                    );
-                    ui.label("🔍");
-                });
+                if !self.sync.log_search.is_empty() && ui.small_button("✕").clicked() {
+                    self.sync.log_search.clear();
+                }
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.sync.log_search)
+                        .hint_text(self.language.hint_search_logs())
+                        .desired_width(120.0),
+                );
+                ui.label("🔍");
             });
 
             ui.separator();
