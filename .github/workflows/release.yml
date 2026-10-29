@@ -83,7 +83,13 @@ jobs:
       - name: Install Linux GUI Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libx11-xcb1 libxrender1 libxext6 libxfixes3 libxcb1 libegl1 libgl1 libvulkan1 libwayland-egl1 pkg-config zlib1g-dev perl file libfuse2 patchelf squashfs-tools xvfb x11-utils libgl1-mesa-dri mesa-vulkan-drivers
+          sudo apt-get install -y \
+            build-essential pkg-config zlib1g-dev perl file libfuse2 patchelf squashfs-tools \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev \
+            libx11-xcb1 libxrender1 libxext6 libxfixes3 libxcb1 libfontconfig1-dev \
+            libwayland-dev libwayland-egl1 libxkbcommon-dev libxkbcommon-x11-0 \
+            xkb-data libx11-data libgl1-mesa-dev libegl1 libgl1 libvulkan1 \
+            xvfb x11-utils libgl1-mesa-dri mesa-vulkan-drivers
 
       - name: Package AppImage
         run: bash scripts/build-appimage.sh

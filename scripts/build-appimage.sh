@@ -11,6 +11,9 @@ cargo build --locked --release
 APPDIR="$ROOT_DIR/build/AppDir"
 DIST_DIR="$ROOT_DIR/dist"
 mkdir -p "$DIST_DIR"
+if [[ -d $APPDIR ]]; then
+    find "$APPDIR" -type d -exec chmod u+w {} +
+fi
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib/glibc" \
     "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps" \
@@ -23,6 +26,21 @@ cp src/assets/icon.png "$APPDIR/valheim-modpack-studio.png"
 cp src/assets/icon.png "$APPDIR/.DirIcon"
 cp scripts/AppRun "$APPDIR/AppRun"
 chmod +x "$APPDIR/AppRun"
+
+XKB_ROOT=${APPIMAGE_XKB_ROOT:-/usr/share/X11/xkb}
+XLOCALE_ROOT=${APPIMAGE_XLOCALE_ROOT:-/usr/share/X11/locale}
+if [[ ! -f "$XKB_ROOT/rules/evdev" || ! -f "$XLOCALE_ROOT/compose.dir" ]]; then
+    echo 'Required XKB/compose data missing. Use the declared devenv environment or install xkb-data/libx11-data in CI.' >&2
+    exit 1
+fi
+mkdir -p "$APPDIR/usr/share/X11/xkb" "$APPDIR/usr/share/X11/locale"
+cp -aL "$XKB_ROOT/." "$APPDIR/usr/share/X11/xkb/"
+cp -aL "$XLOCALE_ROOT/." "$APPDIR/usr/share/X11/locale/"
+find "$APPDIR/usr/share/X11" -type d -exec chmod u+w {} +
+# Compose includes support %S for the active XLOCALEDIR. Normalize both Nix and
+# conventional absolute prefixes so copied locale data remains relocatable.
+find "$APPDIR/usr/share/X11/locale" -type f -name Compose -exec \
+    sed -i -E 's#/(nix/store/[^/]+/share/X11/locale|usr/share/X11/locale)/#%S/#g' {} +
 
 # Include libraries loaded at runtime by winit, wgpu, and clipboard backends.
 # ldd alone cannot discover these. Bundle their transitive imports too.
@@ -116,7 +134,7 @@ if command -v dpkg-query > /dev/null; then
     for package in libc6 libgcc-s1 zlib1g libwayland-client0 libwayland-cursor0 libwayland-egl1 \
         libxkbcommon0 libxkbcommon-x11-0 libx11-6 libx11-xcb1 libxcursor1 libxi6 \
         libxrandr2 libxrender1 libxext6 libxfixes3 libxinerama1 libxcb1 libvulkan1 \
-        libgl1 libegl1 libglx0 libglvnd0 libglvnd-core-dev libffi8 libxau6 libxdmcp6 libbsd0 libmd0; do
+        libgl1 libegl1 libglx0 libglvnd0 libglvnd-core-dev libffi8 libxau6 libxdmcp6 libbsd0 libmd0 xkb-data libx11-data; do
         if [[ -f /usr/share/doc/$package/copyright ]]; then
             cp "/usr/share/doc/$package/copyright" "$APPDIR/usr/share/doc/valheim-runtime/$package.copyright"
         fi

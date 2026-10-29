@@ -40,13 +40,16 @@ if [ -n "$HOST_LOADER" ] && [ -x "$HOST_LOADER" ]; then
     fi
 fi
 
-LIBRARY_PATH="$GLIBC_DIR:$BUNDLED_GLIBC:$HERE/usr/lib"
+APPIMAGE_LIBRARY_PATH="$GLIBC_DIR:$BUNDLED_GLIBC:$HERE/usr/lib"
 if [ -d /run/opengl-driver/lib ]; then
-    LIBRARY_PATH="/run/opengl-driver/lib:$LIBRARY_PATH"
+    APPIMAGE_LIBRARY_PATH="/run/opengl-driver/lib:$APPIMAGE_LIBRARY_PATH"
 fi
-LIBRARY_PATH="$LIBRARY_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+APPIMAGE_LIBRARY_PATH="$APPIMAGE_LIBRARY_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 export XDG_DATA_DIRS="$HERE/usr/share:/run/opengl-driver/share:/run/current-system/sw/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export XKB_CONFIG_ROOT="${XKB_CONFIG_ROOT:-$HERE/usr/share/X11/xkb}"
+export XLOCALEDIR="${XLOCALEDIR:-$HERE/usr/share/X11/locale}"
+export XCURSOR_PATH="${XCURSOR_PATH:-$HOME/.icons:$HOME/.local/share/icons:/run/current-system/sw/share/icons:/usr/share/icons:/usr/share/pixmaps}"
 if [ -z "${__EGL_VENDOR_LIBRARY_DIRS:-}" ]; then
     export __EGL_VENDOR_LIBRARY_DIRS="/run/opengl-driver/share/glvnd/egl_vendor.d:/etc/glvnd/egl_vendor.d:/usr/share/glvnd/egl_vendor.d"
 fi
@@ -65,13 +68,13 @@ fi
 # Resolve direct imports and dlopen-only libraries without opening a window.
 if [ "${VALHEIM_APPIMAGE_CHECK:-0}" = 1 ]; then
     printf 'ELF loader: %s\n' "$LOADER"
-    "$LOADER" --library-path "$LIBRARY_PATH" --list "$BINARY"
+    "$LOADER" --library-path "$APPIMAGE_LIBRARY_PATH" --list "$BINARY"
     for library in "$HERE"/usr/lib/*.so*; do
-        "$LOADER" --library-path "$LIBRARY_PATH" --list "$library" > /dev/null
+        "$LOADER" --library-path "$APPIMAGE_LIBRARY_PATH" --list "$library" > /dev/null
     done
     exit 0
 fi
 
 # Do not export bundled LD_LIBRARY_PATH: host children such as xdg-open must
 # retain their own runtime. The loader option also covers this process's dlopen.
-exec "$LOADER" --library-path "$LIBRARY_PATH" "$BINARY" "$@"
+exec "$LOADER" --library-path "$APPIMAGE_LIBRARY_PATH" "$BINARY" "$@"

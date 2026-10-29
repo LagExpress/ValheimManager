@@ -112,8 +112,12 @@ Run the AppImage:
 ./dist/ValheimManager-0.1.7.AppImage
 ```
 
+If FUSE mounting is unavailable, use
+`./dist/ValheimManager-0.1.7.AppImage --appimage-extract-and-run`.
+
 CI and local builds use the same packager. It bundles the ELF loader, glibc, and
-the Wayland/X11/OpenGL/Vulkan client libraries with their dependencies. The
+the Wayland/X11/OpenGL/Vulkan client libraries with their dependencies, keyboard
+layouts, and compose tables. The
 launcher uses a newer host glibc when available to support the host's graphics
 drivers, and does not require `nix-ld` or `appimage-run` on NixOS. The host still
 provides its kernel, desktop session, and compatible graphics drivers; the

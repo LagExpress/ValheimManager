@@ -62,6 +62,7 @@ in
     util-linux
     xorg.xorgserver
     xorg.xwininfo
+    xkeyboard_config
     pkg-config
     zip
     unzip
@@ -78,6 +79,8 @@ in
 
   # Dynamic linker path for GUI crates (winit, eframe, glow)
   env.LD_LIBRARY_PATH = lib.makeLibraryPath libraries;
+  env.APPIMAGE_XKB_ROOT = "${pkgs.xkeyboard_config}/share/X11/xkb";
+  env.APPIMAGE_XLOCALE_ROOT = "${pkgs.xorg.libX11}/share/X11/locale";
   env.MINGW_PTHREAD_LIB = "${pkgs.pkgsCross.mingwW64.windows.pthreads}/lib/libpthread.a";
   # Keep native C builds native; the Windows script sets target-specific tools.
   env.CC = "${pkgs.stdenv.cc}/bin/cc";

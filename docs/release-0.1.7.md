@@ -19,6 +19,7 @@ Both build paths now invoke `scripts/build-appimage.sh`. The image includes:
 - A checksum-verified, pinned Type 2 AppImage runtime.
 - An ELF loader, glibc, and compatibility libraries from the build system.
 - Explicitly selected dlopen-only client libraries and their transitive imports.
+- XKB keyboard layouts and X11 locale/compose tables, with explicit resource paths.
 - Relative library search paths instead of development-store RPATHs.
 
 `scripts/AppRun` launches via the bundled loader, or a newer real host glibc
@@ -43,6 +44,13 @@ implied by the AppImage format.
 - CI now runs the same packaging checks and opens the packaged application on a
   headless display before uploading it. Cross-distribution coverage must be
   reported from the actual artifacts tested, not inferred from file format.
+- The first Ubuntu-built candidate passed Xvfb but exposed a missing XKB root
+  when started on NixOS/Wayland. The packager now requires and bundles XKB and
+  compose data, and the checker rejects an image missing either resource.
+- The Ubuntu payload rendered Wayland frames on NixOS after adding these
+  resources. Real libxkbcommon calls loaded the packaged context and compose
+  tables for English, Spanish, Russian, and Traditional Chinese. Compose includes
+  use the relocatable `%S` prefix instead of build-store or system paths.
 
 Packaging and validation tools are declared in `devenv.nix`, including ELF tools,
 shell/workflow checks, the dependency auditor, Python, Xvfb, and xwininfo. The

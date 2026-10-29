@@ -253,6 +253,8 @@ devenv shell -- bash scripts/build-windows.sh
   `scripts/check-appimage.sh <image>` and `scripts/smoke-appimage.sh <image>` inside
   devenv. Check actual CI artifacts on NixOS; a valid container and checksum do
   not prove its payload can start.
+  Include XKB keyboard data and compose tables with relocatable resource paths;
+  Ubuntu's installed `/usr/share/X11` must not hide missing packaged data.
 - `main` pushes/PRs run checks and desktop builds. A `v<version>` tag must match
   the Cargo version and also triggers release publication. Releases attach only
   the EXE, AppImage, and `SHA256SUMS-<version>.txt`. Use GitHub's built-in source

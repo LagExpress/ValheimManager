@@ -11,6 +11,7 @@ user-visible behavior; omit build reports, test counts, and development history.
 - Fixed AppImage startup on NixOS by launching through a real ELF loader instead of the system's compatibility stub.
 - Included the C runtime and required Wayland, X11, OpenGL, Vulkan-loader, and compression libraries in AppImages.
 - Removed build-machine library search paths from packaged libraries.
+- Bundled XKB keyboard layouts and compose tables to prevent Wayland startup failures on systems without standard X11 data paths.
 - Kept bundled library paths out of the environment inherited by host programs such as the output-folder opener.
 
 ### Changed
