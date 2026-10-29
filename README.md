@@ -135,6 +135,7 @@ This repository includes a ready-to-use GitHub Actions workflow at [`.github/wor
   - `ValheimManager-0.1.6.AppImage` (Linux)
   - `ValheimManager-0.1.6.exe` (Windows)
 - Builds are uploaded to GitHub Actions artifacts. A tag matching the Cargo version (for example `v0.1.6`) also publishes a GitHub release containing the EXE, AppImage, and SHA-256 checksums. Source is available through GitHub's built-in Source code (zip) and Source code (tar.gz) downloads for the tag; CI does not upload duplicate source archives.
+- Release descriptions come from [CHANGELOG.md](CHANGELOG.md). Before tagging a version, add its entry under `## [<version>] - YYYY-MM-DD`, using Added, Changed, Fixed, Removed, or Security sections as needed. CI rejects a version without a nonempty changelog entry and publishes that entry as the release description.
 
 ---
 
