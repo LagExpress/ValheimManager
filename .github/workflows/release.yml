@@ -117,13 +117,13 @@ jobs:
           echo "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  runtime-x86_64" | sha256sum --check --strict
           chmod +x appimagetool-x86_64.AppImage
           ./appimagetool-x86_64.AppImage --appimage-extract
-          ARCH=x86_64 ./squashfs-root/AppRun --runtime-file "$PWD/runtime-x86_64" build/AppDir "dist/ValheimModpackStudio-${VERSION}-x86_64.AppImage"
+          ARCH=x86_64 ./squashfs-root/AppRun --runtime-file "$PWD/runtime-x86_64" build/AppDir "dist/ValheimManager-${VERSION}.AppImage"
 
       - name: Upload Linux AppImage Artifact
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: ValheimModpackStudio-${{ needs.quality.outputs.version }}-Linux-AppImage
-          path: dist/ValheimModpackStudio-${{ needs.quality.outputs.version }}-x86_64.AppImage
+          name: ValheimManager-${{ needs.quality.outputs.version }}-Linux-AppImage
+          path: dist/ValheimManager-${{ needs.quality.outputs.version }}.AppImage
           if-no-files-found: error
 
   build-windows-exe:
@@ -153,13 +153,13 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp target/release/valheim-modpack-studio.exe "dist/ValheimModpackStudio-${VERSION}-x86_64.exe"
+          cp target/release/valheim-modpack-studio.exe "dist/ValheimManager-${VERSION}.exe"
 
       - name: Upload Windows Executable Artifact
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: ValheimModpackStudio-${{ needs.quality.outputs.version }}-Windows-x64
-          path: dist/ValheimModpackStudio-${{ needs.quality.outputs.version }}-x86_64.exe
+          name: ValheimManager-${{ needs.quality.outputs.version }}-Windows
+          path: dist/ValheimManager-${{ needs.quality.outputs.version }}.exe
           if-no-files-found: error
 
   publish-release:
@@ -179,37 +179,33 @@ jobs:
       - name: Download Linux AppImage
         uses: actions/download-artifact@v8.0.2
         with:
-          name: ValheimModpackStudio-${{ needs.quality.outputs.version }}-Linux-AppImage
+          name: ValheimManager-${{ needs.quality.outputs.version }}-Linux-AppImage
           path: dist
 
       - name: Download Windows Exe
         uses: actions/download-artifact@v8.0.2
         with:
-          name: ValheimModpackStudio-${{ needs.quality.outputs.version }}-Windows-x64
+          name: ValheimManager-${{ needs.quality.outputs.version }}-Windows
           path: dist
 
-      - name: Archive tagged source and checksum all release assets
+      - name: Checksum release binaries
         shell: bash
         run: |
-          git archive --format=zip --prefix="ValheimModpackStudio-${VERSION}-source/" HEAD > "dist/ValheimModpackStudio-${VERSION}-source.zip"
-          git archive --format=tar.gz --prefix="ValheimModpackStudio-${VERSION}-source/" HEAD > "dist/ValheimModpackStudio-${VERSION}-source.tar.gz"
-          test -s "dist/ValheimModpackStudio-${VERSION}-x86_64.AppImage"
-          test -s "dist/ValheimModpackStudio-${VERSION}-x86_64.exe"
+          test -s "dist/ValheimManager-${VERSION}.AppImage"
+          test -s "dist/ValheimManager-${VERSION}.exe"
           cd dist
-          sha256sum "ValheimModpackStudio-${VERSION}-x86_64.AppImage" "ValheimModpackStudio-${VERSION}-x86_64.exe" "ValheimModpackStudio-${VERSION}-source.zip" "ValheimModpackStudio-${VERSION}-source.tar.gz" > "SHA256SUMS-${VERSION}.txt"
+          sha256sum "ValheimManager-${VERSION}.AppImage" "ValheimManager-${VERSION}.exe" > "SHA256SUMS-${VERSION}.txt"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3.0.3
         with:
-          name: Valheim Modpack Studio v${{ needs.quality.outputs.version }}
+          name: ValheimManager v${{ needs.quality.outputs.version }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           make_latest: legacy
           files: |
-            dist/ValheimModpackStudio-${{ needs.quality.outputs.version }}-x86_64.AppImage
-            dist/ValheimModpackStudio-${{ needs.quality.outputs.version }}-x86_64.exe
-            dist/ValheimModpackStudio-${{ needs.quality.outputs.version }}-source.zip
-            dist/ValheimModpackStudio-${{ needs.quality.outputs.version }}-source.tar.gz
+            dist/ValheimManager-${{ needs.quality.outputs.version }}.AppImage
+            dist/ValheimManager-${{ needs.quality.outputs.version }}.exe
             dist/SHA256SUMS-${{ needs.quality.outputs.version }}.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

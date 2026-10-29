@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+VERSION=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' Cargo.toml | head -n 1)
+: "${VERSION:?Could not read the app version from Cargo.toml}"
 
 echo "🪟 Building Windows executable (x86_64-pc-windows-gnu)..."
 
@@ -35,7 +37,7 @@ export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-L $SHIM_DIR"
 cargo build --target x86_64-pc-windows-gnu --release
 
 mkdir -p "$ROOT_DIR/dist"
-cp -f "$ROOT_DIR/target/x86_64-pc-windows-gnu/release/valheim-modpack-studio.exe" "$ROOT_DIR/dist/ValheimModpackStudio-0.1.5-x86_64.exe"
+cp -f "$ROOT_DIR/target/x86_64-pc-windows-gnu/release/valheim-modpack-studio.exe" "$ROOT_DIR/dist/ValheimManager-${VERSION}.exe"
 
 echo ""
-echo "✔ Successfully generated Windows executable: dist/ValheimModpackStudio-0.1.5-x86_64.exe ($(du -h "$ROOT_DIR/dist/ValheimModpackStudio-0.1.5-x86_64.exe" | cut -f1))"
+echo "✔ Successfully generated Windows executable: dist/ValheimManager-${VERSION}.exe ($(du -h "$ROOT_DIR/dist/ValheimManager-${VERSION}.exe" | cut -f1))"

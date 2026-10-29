@@ -2953,7 +2953,7 @@ checksum = "4a0e2d11620c50695fe12bbbfde96b3477fe606e7284c22d505c12ce51214514"
 
 [[package]]
 name = "valheim-modpack-studio"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "dirs",
  "eframe",

@@ -104,12 +104,12 @@ To build a standalone, portable `.AppImage` that runs on any Linux distribution:
 devenv shell -- appimage
 
 # Output is generated at:
-dist/ValheimModpackStudio-0.1.5-x86_64.AppImage
+dist/ValheimManager-0.1.6.AppImage
 ```
 
 Run the AppImage:
 ```bash
-./dist/ValheimModpackStudio-0.1.5-x86_64.AppImage
+./dist/ValheimManager-0.1.6.AppImage
 ```
 
 ---
@@ -126,21 +126,21 @@ scripts\build-windows.bat
 
 The output binary will be created at:
 ```text
-dist\ValheimModpackStudio-0.1.5-x86_64.exe
+dist\ValheimManager-0.1.6.exe
 ```
 
 #### Option B: Automated GitHub Actions CI/CD
 This repository includes a ready-to-use GitHub Actions workflow at [`.github/workflows/release.yml`](.github/workflows/release.yml):
 - Pushes to `main`, pull requests to `main`, and version tags run quality checks and build both:
-  - `ValheimModpackStudio-0.1.5-x86_64.AppImage` (Linux)
-  - `ValheimModpackStudio-0.1.5-x86_64.exe` (Windows)
-- Builds are uploaded to GitHub Actions artifacts. A tag matching the Cargo version (for example `v0.1.5`) also publishes a GitHub release containing the EXE, AppImage, tagged source as ZIP and tar.gz, and SHA-256 checksums. GitHub's standard source-code download links remain available on the tag as well.
+  - `ValheimManager-0.1.6.AppImage` (Linux)
+  - `ValheimManager-0.1.6.exe` (Windows)
+- Builds are uploaded to GitHub Actions artifacts. A tag matching the Cargo version (for example `v0.1.6`) also publishes a GitHub release containing the EXE, AppImage, and SHA-256 checksums. Source is available through GitHub's built-in Source code (zip) and Source code (tar.gz) downloads for the tag; CI does not upload duplicate source archives.
 
 ---
 
 ## 🛠️ Project Architecture
 
-The shared appearance tokens, reusable UI components, and native effect adapter keep screen layouts independent of platform-specific transparency. [Dependency review](docs/dependency-audit-2026-10-29.md), [UI validation](docs/ui-validation-2026-10-29.md), and [release 0.1.5](docs/release-0.1.5.md) document the checks and platform limits.
+The shared appearance tokens, reusable UI components, and native effect adapter keep screen layouts independent of platform-specific transparency. [Dependency review](docs/dependency-audit-2026-10-29.md), [UI validation](docs/ui-validation-2026-10-29.md), and [release 0.1.6](docs/release-0.1.6.md) document the checks and platform limits.
 
 ```text
 ├── Cargo.toml                      # Rust dependencies & metadata
