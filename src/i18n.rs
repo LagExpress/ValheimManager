@@ -25,74 +25,86 @@ impl Language {
 
     // Top Header & Navigation
     pub fn app_title(&self) -> &'static str {
-        "🛡️ Valheim Modpack Studio"
+        "Valheim Modpack Studio"
     }
 
     pub fn btn_open_output(&self) -> &'static str {
         match self {
-            Language::English => "📂 Open Output Folder",
-            Language::Spanish => "📂 Abrir Carpeta de Salida",
+            Language::English => "Open Output Folder",
+            Language::Spanish => "Abrir Carpeta de Salida",
         }
     }
 
     pub fn btn_build_quick(&self) -> &'static str {
         match self {
-            Language::English => "✨ Build Modpack ZIP",
-            Language::Spanish => "✨ Crear Modpack ZIP",
+            Language::English => "Build Modpack ZIP",
+            Language::Spanish => "Crear Modpack ZIP",
         }
     }
 
     pub fn tab_profile(&self) -> &'static str {
         match self {
-            Language::English => "📂 Profile & Info",
-            Language::Spanish => "📂 Perfil e Info",
+            Language::English => "Profile & Info",
+            Language::Spanish => "Perfil e Info",
         }
     }
 
     pub fn tab_mods(&self) -> &'static str {
-        "📦 Mods"
+        "Mods"
     }
 
     pub fn tab_configs(&self) -> &'static str {
         match self {
-            Language::English => "⚙️ Configs",
-            Language::Spanish => "⚙️ Configuración",
+            Language::English => "Configs",
+            Language::Spanish => "Configuración",
         }
     }
 
     pub fn tab_build(&self) -> &'static str {
         match self {
-            Language::English => "🚀 Build & Export",
-            Language::Spanish => "🚀 Compilar y Exportar",
+            Language::English => "Build & Export",
+            Language::Spanish => "Compilar y Exportar",
         }
     }
 
     pub fn tab_server_sync(&self) -> &'static str {
         match self {
-            Language::English => "🔄 Server Sync",
-            Language::Spanish => "🔄 Sincronización Servidor",
+            Language::English => "Server Sync",
+            Language::Spanish => "Sincronización Servidor",
         }
     }
 
     pub fn tab_help(&self) -> &'static str {
         match self {
-            Language::English => "ℹ️ Instructions",
-            Language::Spanish => "ℹ️ Instrucciones",
+            Language::English => "Instructions",
+            Language::Spanish => "Instrucciones",
         }
     }
 
-    pub fn status_summary(&self, source: &str, profile: &str, mods: usize, configs: usize) -> String {
+    pub fn status_summary(
+        &self,
+        source: &str,
+        profile: &str,
+        mods: usize,
+        configs: usize,
+    ) -> String {
         match self {
-            Language::English => format!("Source: {} | Profile: {} | {} mods | {} configs", source, profile, mods, configs),
-            Language::Spanish => format!("Origen: {} | Perfil: {} | {} mods | {} configuraciones", source, profile, mods, configs),
+            Language::English => format!(
+                "Source: {} | Profile: {} | {} mods | {} configs",
+                source, profile, mods, configs
+            ),
+            Language::Spanish => format!(
+                "Origen: {} | Perfil: {} | {} mods | {} configuraciones",
+                source, profile, mods, configs
+            ),
         }
     }
 
     // Profile & Info Tab
     pub fn heading_mod_manager(&self) -> &'static str {
         match self {
-            Language::English => "📂 Mod Manager & Profile Source",
-            Language::Spanish => "📂 Gestor de Mods y Origen del Perfil",
+            Language::English => "Mod Manager & Profile Source",
+            Language::Spanish => "Gestor de Mods y Origen del Perfil",
         }
     }
 
@@ -140,8 +152,8 @@ impl Language {
 
     pub fn btn_reload(&self) -> &'static str {
         match self {
-            Language::English => "🔄 Reload",
-            Language::Spanish => "🔄 Recargar",
+            Language::English => "Reload",
+            Language::Spanish => "Recargar",
         }
     }
 
@@ -154,8 +166,8 @@ impl Language {
 
     pub fn heading_metadata(&self) -> &'static str {
         match self {
-            Language::English => "📝 Modpack Metadata (Thunderstore manifest.json)",
-            Language::Spanish => "📝 Metadatos del Modpack (manifest.json de Thunderstore)",
+            Language::English => "Modpack Metadata (Thunderstore manifest.json)",
+            Language::Spanish => "Metadatos del Modpack (manifest.json de Thunderstore)",
         }
     }
 
@@ -210,30 +222,32 @@ impl Language {
 
     pub fn heading_output_dir(&self) -> &'static str {
         match self {
-            Language::English => "📁 Output Directory",
-            Language::Spanish => "📁 Directorio de Salida",
+            Language::English => "Output Directory",
+            Language::Spanish => "Directorio de Salida",
         }
     }
 
     pub fn label_output_dir_desc(&self) -> &'static str {
         match self {
             Language::English => "Where the final modpack .zip and unpacked build files are saved:",
-            Language::Spanish => "Dónde se guardarán el .zip final del modpack y los archivos generados:",
+            Language::Spanish => {
+                "Dónde se guardarán el .zip final del modpack y los archivos generados:"
+            }
         }
     }
 
     pub fn btn_proceed_to_mods(&self) -> &'static str {
         match self {
-            Language::English => "Proceed to Mods Selection ➔",
-            Language::Spanish => "Continuar a Selección de Mods ➔",
+            Language::English => "Proceed to Mods Selection",
+            Language::Spanish => "Continuar a Selección de Mods",
         }
     }
 
     // Mods Tab
     pub fn heading_mods(&self) -> &'static str {
         match self {
-            Language::English => "📦 Select Mods for Modpack",
-            Language::Spanish => "📦 Seleccionar Mods para el Modpack",
+            Language::English => "Select Mods for Modpack",
+            Language::Spanish => "Seleccionar Mods para el Modpack",
         }
     }
 
@@ -295,16 +309,16 @@ impl Language {
 
     pub fn btn_proceed_to_configs(&self) -> &'static str {
         match self {
-            Language::English => "Proceed to Configs Selection ➔",
-            Language::Spanish => "Continuar a Selección de Configuración ➔",
+            Language::English => "Proceed to Configs Selection",
+            Language::Spanish => "Continuar a Selección de Configuración",
         }
     }
 
     // Configs Tab
     pub fn heading_configs(&self) -> &'static str {
         match self {
-            Language::English => "⚙️ Select Configuration Files (BepInEx/config)",
-            Language::Spanish => "⚙️ Seleccionar Archivos de Configuración (BepInEx/config)",
+            Language::English => "Select Configuration Files (BepInEx/config)",
+            Language::Spanish => "Seleccionar Archivos de Configuración (BepInEx/config)",
         }
     }
 
@@ -324,8 +338,12 @@ impl Language {
 
     pub fn no_configs_found(&self) -> &'static str {
         match self {
-            Language::English => "No configuration files found in this profile's BepInEx/config folder.",
-            Language::Spanish => "No se encontraron archivos en la carpeta BepInEx/config de este perfil.",
+            Language::English => {
+                "No configuration files found in this profile's BepInEx/config folder."
+            }
+            Language::Spanish => {
+                "No se encontraron archivos en la carpeta BepInEx/config de este perfil."
+            }
         }
     }
 
@@ -338,23 +356,23 @@ impl Language {
 
     pub fn btn_proceed_to_build(&self) -> &'static str {
         match self {
-            Language::English => "Proceed to Build & Export ➔",
-            Language::Spanish => "Continuar a Compilar y Exportar ➔",
+            Language::English => "Proceed to Build & Export",
+            Language::Spanish => "Continuar a Compilar y Exportar",
         }
     }
 
     // Build Tab
     pub fn heading_build(&self) -> &'static str {
         match self {
-            Language::English => "🚀 Build & Export Modpack",
-            Language::Spanish => "🚀 Compilar y Exportar Modpack",
+            Language::English => "Build & Export Modpack",
+            Language::Spanish => "Compilar y Exportar Modpack",
         }
     }
 
     pub fn heading_summary(&self) -> &'static str {
         match self {
-            Language::English => "📋 Modpack Summary",
-            Language::Spanish => "📋 Resumen del Modpack",
+            Language::English => "Modpack Summary",
+            Language::Spanish => "Resumen del Modpack",
         }
     }
 
@@ -381,8 +399,8 @@ impl Language {
 
     pub fn btn_build_main(&self) -> &'static str {
         match self {
-            Language::English => "✨ Build Thunderstore Modpack (.zip)",
-            Language::Spanish => "✨ Crear Modpack de Thunderstore (.zip)",
+            Language::English => "Build Thunderstore Modpack (.zip)",
+            Language::Spanish => "Crear Modpack de Thunderstore (.zip)",
         }
     }
 
@@ -402,8 +420,8 @@ impl Language {
 
     pub fn placeholder_no_preview(&self) -> &'static str {
         match self {
-            Language::English => "🔍 Click \"Preview Changes\" on the left to inspect pending uploads, deletions, and server wrapper status.",
-            Language::Spanish => "🔍 Haz clic en \"Vista Previa de Cambios\" a la izquierda para inspeccionar subidas, eliminaciones y el estado del wrapper.",
+            Language::English => "Click \"Preview Changes\"on the left to inspect pending uploads, deletions, and server wrapper status.",
+            Language::Spanish => "Haz clic en \"Vista Previa de Cambios\"a la izquierda para inspeccionar subidas, eliminaciones y el estado del wrapper.",
         }
     }
 
@@ -430,16 +448,16 @@ impl Language {
 
     pub fn btn_open_folder(&self) -> &'static str {
         match self {
-            Language::English => "📂 Open Output Folder",
-            Language::Spanish => "📂 Abrir Carpeta de Salida",
+            Language::English => "Open Output Folder",
+            Language::Spanish => "Abrir Carpeta de Salida",
         }
     }
 
     // Server Sync Tab - General & Connection
     pub fn sync_title(&self) -> &'static str {
         match self {
-            Language::English => "🔄 Dedicated Server Sync",
-            Language::Spanish => "🔄 Sincronización con Servidor Dedicado",
+            Language::English => "Dedicated Server Sync",
+            Language::Spanish => "Sincronización con Servidor Dedicado",
         }
     }
 
@@ -466,22 +484,22 @@ impl Language {
 
     pub fn source_folder_found(&self) -> &'static str {
         match self {
-            Language::English => "✔ Source folder found and ready to sync.",
-            Language::Spanish => "✔ Carpeta de origen encontrada y lista para sincronizar.",
+            Language::English => "Source folder found and ready to sync.",
+            Language::Spanish => "Carpeta de origen encontrada y lista para sincronizar.",
         }
     }
 
     pub fn source_folder_missing(&self) -> &'static str {
         match self {
-            Language::English => "❌ Source folder not found. Select a valid profile on the Profile & Info tab.",
-            Language::Spanish => "❌ Carpeta de origen no encontrada. Selecciona un perfil válido en la pestaña Perfil e Info.",
+            Language::English => "Source folder not found. Select a valid profile on the Profile & Info tab.",
+            Language::Spanish => "Carpeta de origen no encontrada. Selecciona un perfil válido en la pestaña Perfil e Info.",
         }
     }
 
     pub fn no_profile_selected(&self) -> &'static str {
         match self {
-            Language::English => "⚠️ No profile selected. Please select a profile on the Profile & Info tab first.",
-            Language::Spanish => "⚠️ No hay ningún perfil seleccionado. Selecciona un perfil en la pestaña Perfil e Info primero.",
+            Language::English => "No profile selected. Please select a profile on the Profile & Info tab first.",
+            Language::Spanish => "No hay ningún perfil seleccionado. Selecciona un perfil en la pestaña Perfil e Info primero.",
         }
     }
 
@@ -550,8 +568,8 @@ impl Language {
 
     pub fn btn_save_settings(&self) -> &'static str {
         match self {
-            Language::English => "💾 Save Settings",
-            Language::Spanish => "💾 Guardar Configuración",
+            Language::English => "Save Settings",
+            Language::Spanish => "Guardar Configuración",
         }
     }
 
@@ -600,8 +618,8 @@ impl Language {
 
     pub fn btn_action_preview(&self) -> &'static str {
         match self {
-            Language::English => "🔍 Preview Changes",
-            Language::Spanish => "🔍 Vista Previa de Cambios",
+            Language::English => "Preview Changes",
+            Language::Spanish => "Vista Previa de Cambios",
         }
     }
 
@@ -614,8 +632,8 @@ impl Language {
 
     pub fn btn_action_sync(&self) -> &'static str {
         match self {
-            Language::English => "⬆️ Sync Changes",
-            Language::Spanish => "⬆️ Sincronizar Cambios",
+            Language::English => "Sync Changes",
+            Language::Spanish => "Sincronizar Cambios",
         }
     }
 
@@ -628,22 +646,24 @@ impl Language {
 
     pub fn btn_action_force(&self) -> &'static str {
         match self {
-            Language::English => "💪 Force Upload All",
-            Language::Spanish => "💪 Forzar Subida Completa",
+            Language::English => "Force Upload All",
+            Language::Spanish => "Forzar Subida Completa",
         }
     }
 
     pub fn tip_action_force(&self) -> &'static str {
         match self {
             Language::English => "Re-upload every local file regardless of remote checksums",
-            Language::Spanish => "Vuelve a subir todos los archivos locales sin importar los checksums remotos",
+            Language::Spanish => {
+                "Vuelve a subir todos los archivos locales sin importar los checksums remotos"
+            }
         }
     }
 
     pub fn btn_action_upload_only(&self) -> &'static str {
         match self {
-            Language::English => "📤 Upload Only",
-            Language::Spanish => "📤 Solo Subir Archivos",
+            Language::English => "Upload Only",
+            Language::Spanish => "Solo Subir Archivos",
         }
     }
 
@@ -656,8 +676,8 @@ impl Language {
 
     pub fn btn_action_wrapper(&self) -> &'static str {
         match self {
-            Language::English => "🛠 Check & Fix Wrapper",
-            Language::Spanish => "🛠 Verificar y Reparar Wrapper",
+            Language::English => "Check & Fix Wrapper",
+            Language::Spanish => "Verificar y Reparar Wrapper",
         }
     }
 
@@ -670,29 +690,35 @@ impl Language {
 
     pub fn btn_action_refresh(&self) -> &'static str {
         match self {
-            Language::English => "🔄 Refresh Staging",
-            Language::Spanish => "🔄 Actualizar Staging",
+            Language::English => "Refresh Staging",
+            Language::Spanish => "Actualizar Staging",
         }
     }
 
     pub fn tip_action_refresh(&self) -> &'static str {
         match self {
-            Language::English => "Copy plugins and config from selected profile into staging folder",
-            Language::Spanish => "Copia plugins y configuración del perfil seleccionado a la carpeta staging",
+            Language::English => {
+                "Copy plugins and config from selected profile into staging folder"
+            }
+            Language::Spanish => {
+                "Copia plugins y configuración del perfil seleccionado a la carpeta staging"
+            }
         }
     }
 
     pub fn btn_action_test(&self) -> &'static str {
         match self {
-            Language::English => "🔌 Test Connection",
-            Language::Spanish => "🔌 Probar Conexión",
+            Language::English => "Test Connection",
+            Language::Spanish => "Probar Conexión",
         }
     }
 
     pub fn tip_action_test(&self) -> &'static str {
         match self {
             Language::English => "Connect to SFTP server and verify BepInEx directory access",
-            Language::Spanish => "Conectar al servidor SFTP y verificar el acceso a la carpeta BepInEx",
+            Language::Spanish => {
+                "Conectar al servidor SFTP y verificar el acceso a la carpeta BepInEx"
+            }
         }
     }
 
@@ -705,16 +731,16 @@ impl Language {
 
     pub fn btn_cancel(&self) -> &'static str {
         match self {
-            Language::English => "⏹ Cancel",
-            Language::Spanish => "⏹ Cancelar",
+            Language::English => "Cancel",
+            Language::Spanish => "Cancelar",
         }
     }
 
     // Preview Section (UI/UX Redesign)
     pub fn heading_preview(&self) -> &'static str {
         match self {
-            Language::English => "📊 Sync Inspection & Preview",
-            Language::Spanish => "📊 Inspección y Vista Previa de Cambios",
+            Language::English => "Sync Inspection & Preview",
+            Language::Spanish => "Inspección y Vista Previa de Cambios",
         }
     }
 
@@ -755,36 +781,36 @@ impl Language {
 
     pub fn wrapper_intact(&self) -> &'static str {
         match self {
-            Language::English => "✔ Ready & Intact",
-            Language::Spanish => "✔ Listo e Intacto",
+            Language::English => "Ready & Intact",
+            Language::Spanish => "Listo e Intacto",
         }
     }
 
     pub fn wrapper_rename_needed(&self) -> &'static str {
         match self {
-            Language::English => "⚠️ Rename Needed",
-            Language::Spanish => "⚠️ Renombrado Necesario",
+            Language::English => "Rename Needed",
+            Language::Spanish => "Renombrado Necesario",
         }
     }
 
     pub fn wrapper_missing(&self) -> &'static str {
         match self {
-            Language::English => "❌ Missing Script",
-            Language::Spanish => "❌ Script Faltante",
+            Language::English => "Missing Script",
+            Language::Spanish => "Script Faltante",
         }
     }
 
     pub fn symlink_ok(&self) -> &'static str {
         match self {
-            Language::English => "✔ Symlink OK",
-            Language::Spanish => "✔ Enlace Simbólico OK",
+            Language::English => "Symlink OK",
+            Language::Spanish => "Enlace Simbólico OK",
         }
     }
 
     pub fn symlink_missing(&self) -> &'static str {
         match self {
-            Language::English => "⚠️ Symlink Missing",
-            Language::Spanish => "⚠️ Falta Enlace",
+            Language::English => "Symlink Missing",
+            Language::Spanish => "Falta Enlace",
         }
     }
 
@@ -797,15 +823,15 @@ impl Language {
 
     pub fn tab_uploads(&self, count: usize) -> String {
         match self {
-            Language::English => format!("⬆ Uploads ({})", count),
-            Language::Spanish => format!("⬆ Subidas ({})", count),
+            Language::English => format!("Uploads ({})", count),
+            Language::Spanish => format!("Subidas ({})", count),
         }
     }
 
     pub fn tab_deletions(&self, count: usize) -> String {
         match self {
-            Language::English => format!("🗑 Deletions ({})", count),
-            Language::Spanish => format!("🗑 Eliminaciones ({})", count),
+            Language::English => format!("Deletions ({})", count),
+            Language::Spanish => format!("Eliminaciones ({})", count),
         }
     }
 
@@ -818,8 +844,12 @@ impl Language {
 
     pub fn msg_no_changes(&self) -> &'static str {
         match self {
-            Language::English => "✨ Server is completely synchronized with local staging. No changes needed!",
-            Language::Spanish => "✨ ¡El servidor está completamente sincronizado! No se requieren cambios.",
+            Language::English => {
+                "Server is completely synchronized with local staging. No changes needed!"
+            }
+            Language::Spanish => {
+                "¡El servidor está completamente sincronizado! No se requieren cambios."
+            }
         }
     }
 
@@ -840,30 +870,30 @@ impl Language {
 
     pub fn sync_completed_title(&self, secs: f32) -> String {
         match self {
-            Language::English => format!("✔ Sync completed successfully in {:.1}s", secs),
-            Language::Spanish => format!("✔ Sincronización completada con éxito en {:.1}s", secs),
+            Language::English => format!("Sync completed successfully in {:.1}s", secs),
+            Language::Spanish => format!("Sincronización completada con éxito en {:.1}s", secs),
         }
     }
 
     pub fn sync_cancelled_title(&self) -> &'static str {
         match self {
-            Language::English => "⏹ Sync was cancelled by user",
-            Language::Spanish => "⏹ Sincronización cancelada por el usuario",
+            Language::English => "Sync was cancelled by user",
+            Language::Spanish => "Sincronización cancelada por el usuario",
         }
     }
 
     pub fn sync_failed_title(&self) -> &'static str {
         match self {
-            Language::English => "⚠️ Sync completed with errors",
-            Language::Spanish => "⚠️ Sincronización finalizada con errores",
+            Language::English => "Sync completed with errors",
+            Language::Spanish => "Sincronización finalizada con errores",
         }
     }
 
     // Logs Section (UI/UX Redesign)
     pub fn heading_logs(&self) -> &'static str {
         match self {
-            Language::English => "📜 Activity & Sync Logs",
-            Language::Spanish => "📜 Registro de Actividad y Sincronización",
+            Language::English => "Activity & Sync Logs",
+            Language::Spanish => "Registro de Actividad y Sincronización",
         }
     }
 
@@ -911,15 +941,15 @@ impl Language {
 
     pub fn btn_copy_logs(&self) -> &'static str {
         match self {
-            Language::English => "📋 Copy",
-            Language::Spanish => "📋 Copiar",
+            Language::English => "Copy",
+            Language::Spanish => "Copiar",
         }
     }
 
     pub fn btn_clear_logs(&self) -> &'static str {
         match self {
-            Language::English => "🗑 Clear",
-            Language::Spanish => "🗑 Limpiar",
+            Language::English => "Clear",
+            Language::Spanish => "Limpiar",
         }
     }
 
@@ -932,15 +962,19 @@ impl Language {
 
     pub fn msg_logs_copied(&self) -> &'static str {
         match self {
-            Language::English => "✔ Logs copied to clipboard!",
-            Language::Spanish => "✔ ¡Registros copiados al portapapeles!",
+            Language::English => "Logs copied to clipboard!",
+            Language::Spanish => "¡Registros copiados al portapapeles!",
         }
     }
 
     pub fn no_logs_yet(&self) -> &'static str {
         match self {
-            Language::English => "No sync activity recorded yet. Run a preview or sync action above.",
-            Language::Spanish => "Aún no hay actividad de sincronización. Ejecuta una vista previa o acción arriba.",
+            Language::English => {
+                "No sync activity recorded yet. Run a preview or sync action above."
+            }
+            Language::Spanish => {
+                "Aún no hay actividad de sincronización. Ejecuta una vista previa o acción arriba."
+            }
         }
     }
 
@@ -954,8 +988,8 @@ impl Language {
     // Instructions / Help Tab
     pub fn help_title(&self) -> &'static str {
         match self {
-            Language::English => "📖 How to Distribute Your Modpack & Sync to Server",
-            Language::Spanish => "📖 Guía de Distribución de Modpacks y Sincronización con Servidor",
+            Language::English => "How to Distribute Your Modpack & Sync to Server",
+            Language::Spanish => "Guía de Distribución de Modpacks y Sincronización con Servidor",
         }
     }
 
@@ -976,8 +1010,9 @@ impl Language {
                         "1. Select the profile you want to deploy on the 'Profile & Info' tab.",
                         "2. Open the 'Server Sync' tab and enter the server host, port, username, and password.",
                         "3. Choose a staging folder. The default is the 'valheim' folder on your Desktop.",
-                        "4. Save settings, then use 'Preview Changes' to verify uploads and deletions before syncing.",
-                        "5. 'Sync Changes' uploads modified files and removes remote files that are no longer in the profile.",
+                        "4. Use 'Test Connection', verify the first-use SHA-256 fingerprint independently, and enter its 64 hex characters in the trusted server key field.",
+                        "5. Save settings, then use 'Preview Changes' to verify uploads and deletions before syncing.",
+                        "6. 'Sync Changes' uploads modified files and removes remote files that are no longer in the profile.",
                         "• 'Refresh Staging' mirrors BepInEx/config and BepInEx/plugins into the staging folder.",
                         "• Ignore patterns in .sync_ignore prevent server-side files (like admin lists or server-only mods) from being deleted.",
                         "• 'Check & Fix Wrapper' restores the modded server launch script after a Valheim game update.",
@@ -1014,8 +1049,9 @@ impl Language {
                         "1. Selecciona el perfil que deseas desplegar en la pestaña 'Perfil e Info'.",
                         "2. Entra a la pestaña 'Sincronización Servidor' e introduce el host, puerto, usuario y contraseña.",
                         "3. Elige una carpeta staging (por defecto la carpeta 'valheim' en tu Escritorio).",
-                        "4. Guarda la configuración y usa 'Vista Previa de Cambios' para inspeccionar subidas y eliminaciones de forma segura.",
-                        "5. 'Sincronizar Cambios' sube los archivos modificados y elimina los archivos del servidor que ya no existan en el perfil.",
+                        "4. Usa 'Probar Conexión', verifica la huella SHA-256 por un medio independiente y pega sus 64 caracteres hexadecimales en el campo de clave confiable.",
+                        "5. Guarda la configuración y usa 'Vista Previa de Cambios' para inspeccionar subidas y eliminaciones de forma segura.",
+                        "6. 'Sincronizar Cambios' sube los archivos modificados y elimina los archivos del servidor que ya no existan en el perfil.",
                         "• 'Actualizar Staging' duplica BepInEx/config y BepInEx/plugins en la carpeta local de preparación.",
                         "• Los patrones en .sync_ignore protegen archivos del servidor (como listas de administradores o mods exclusivos del server) para que no se borren.",
                         "• 'Verificar y Reparar Wrapper' restaura el script de inicio modificado tras una actualización oficial de Valheim.",

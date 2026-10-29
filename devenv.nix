@@ -7,6 +7,12 @@
 }:
 
 let
+  # Expose cross tools without importing their setup hook into native C builds.
+  mingwTools = pkgs.buildEnv {
+    name = "valheim-mingw-tools";
+    paths = [ pkgs.pkgsCross.mingwW64.stdenv.cc pkgs.pkgsCross.mingwW64.stdenv.cc.bintools ];
+    pathsToLink = [ "/bin" ];
+  };
   libraries = with pkgs; [
     libGL
     libxkbcommon
@@ -21,7 +27,12 @@ let
 in
 {
   # Language runtimes
-  languages.rust.enable = true;
+  languages.rust = {
+    enable = true;
+    channel = "stable";
+    version = "1.98.1";
+    targets = [ "x86_64-pc-windows-gnu" ];
+  };
   languages.javascript.enable = true;
 
   # Project dependencies and tools
@@ -37,11 +48,16 @@ in
     zlib
     squashfsTools
     appimage-run
-    pkgsCross.mingwW64.stdenv.cc
+    mingwTools
   ] ++ libraries;
 
   # Dynamic linker path for GUI crates (winit, eframe, glow)
   env.LD_LIBRARY_PATH = lib.makeLibraryPath libraries;
+  env.MINGW_PTHREAD_LIB = "${pkgs.pkgsCross.mingwW64.windows.pthreads}/lib/libpthread.a";
+  # Keep native C builds native; the Windows script sets target-specific tools.
+  env.CC = "${pkgs.stdenv.cc}/bin/cc";
+  env.AR = "${pkgs.stdenv.cc.bintools}/bin/ar";
+  env.RANLIB = "${pkgs.stdenv.cc.bintools}/bin/ranlib";
 
   # Helper scripts
   scripts.pack.exec = ''

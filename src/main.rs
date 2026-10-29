@@ -1,9 +1,13 @@
 mod app;
+mod appearance;
 mod i18n;
+mod modpack_config;
 mod packager;
+mod platform_effects;
 mod profile;
 mod sftp;
 mod sync;
+mod ui_components;
 
 use app::ModpackApp;
 use eframe::egui;
@@ -50,8 +54,9 @@ fn main() -> eframe::Result<()> {
     // Window configuration with explicit app_id and decoration buttons for Wayland / COSMIC
     let mut viewport = egui::ViewportBuilder::default()
         .with_app_id("valheim-modpack-studio")
-        .with_inner_size([980.0, 720.0])
-        .with_min_inner_size([800.0, 520.0])
+        .with_inner_size([1100.0, 720.0])
+        .with_min_inner_size([640.0, 480.0])
+        .with_transparent(true)
         .with_title("Valheim Modpack Studio")
         .with_resizable(true)
         .with_maximize_button(true)
@@ -65,19 +70,12 @@ fn main() -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
-        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
-            supported_backends: eframe::wgpu::Backends::all(),
-            ..Default::default()
-        },
         ..Default::default()
     };
 
     eframe::run_native(
         "Valheim Modpack Studio",
         native_options,
-        Box::new(|cc| {
-            egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(ModpackApp::default()))
-        }),
+        Box::new(|cc| Ok(Box::new(ModpackApp::new(cc)))),
     )
 }

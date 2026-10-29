@@ -13,7 +13,7 @@ const path = require('path');
 const os = require('os');
 const zlib = require('zlib');
 const readline = require('readline');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 // ANSI color codes
 const c = {
@@ -219,7 +219,10 @@ function generateDefaultIcon(title = 'Valheim') {
 // Copy file or directory recursively with optional filter
 function copyRecursive(src, dest, filterFn = null) {
   if (filterFn && !filterFn(src)) return;
-  const stat = fs.statSync(src);
+  const stat = fs.lstatSync(src);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Refusing to package symlink: ${src}`);
+  }
   if (stat.isDirectory()) {
     fs.mkdirSync(dest, { recursive: true });
     for (const item of fs.readdirSync(src)) {
@@ -233,22 +236,56 @@ function copyRecursive(src, dest, filterFn = null) {
 
 // Create ZIP file using nix `zip` or fallback to node zip
 function createZipArchive(sourceDir, zipFilePath) {
-  fs.mkdirSync(path.dirname(zipFilePath), { recursive: true });
-  if (fs.existsSync(zipFilePath)) {
-    fs.unlinkSync(zipFilePath);
-  }
-
-  // Attempt using system / devenv zip command
+  const finalPath = path.resolve(zipFilePath);
+  fs.mkdirSync(path.dirname(finalPath), { recursive: true });
+  const tempDir = fs.mkdtempSync(path.join(path.dirname(finalPath), '.valheim-pack-'));
+  const tempZip = path.join(tempDir, path.basename(finalPath));
+  let preserveTempDir = false;
   try {
-    execSync(`zip -r -q "${zipFilePath}" .`, {
-      cwd: sourceDir,
-      stdio: 'pipe',
-    });
+    try {
+      execFileSync('zip', ['-r', '-q', tempZip, '.'], {
+        cwd: sourceDir,
+        stdio: 'pipe',
+      });
+    } catch (err) {
+      // Keep the dependency-free Node writer as a fallback when `zip` is unavailable.
+      writeStandaloneZip(sourceDir, tempZip);
+    }
+    if (!fs.existsSync(tempZip) || fs.statSync(tempZip).size === 0) {
+      throw new Error('ZIP writer did not produce an archive');
+    }
+
+    let existing;
+    try {
+      existing = fs.lstatSync(finalPath);
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+    if (existing && (!existing.isFile() || existing.isSymbolicLink())) {
+      throw new Error(`Refusing to replace non-regular archive path: ${finalPath}`);
+    }
+
+    if (existing && process.platform === 'win32') {
+      const backupPath = path.join(tempDir, `${path.basename(finalPath)}.backup`);
+      fs.renameSync(finalPath, backupPath);
+      try {
+        fs.renameSync(tempZip, finalPath);
+      } catch (err) {
+        try {
+          fs.renameSync(backupPath, finalPath);
+        } catch (restoreErr) {
+          preserveTempDir = true;
+          throw new Error(`Could not publish archive (${err.message}) or restore previous archive (${restoreErr.message}); previous archive is preserved at ${backupPath}`);
+        }
+        throw err;
+      }
+      fs.rmSync(backupPath);
+    } else {
+      fs.renameSync(tempZip, finalPath);
+    }
     return true;
-  } catch (err) {
-    // If zip command fails, use standalone zip writer
-    writeStandaloneZip(sourceDir, zipFilePath);
-    return true;
+  } finally {
+    if (!preserveTempDir) fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
@@ -387,7 +424,7 @@ ${mods.map(m => `| **${m.displayName}** | ${m.authorName || '-'} | \`${m.version
 This modpack includes curated, pre-tuned configuration files:
 ${includedConfigs.map(c => `- \`${c.name}\``).join('\n')}
 
-> **Security Notice:** Personal player IDs, runtime caches, and private server connection passwords have been excluded.
+> **Review before sharing:** Selected configuration files are included as listed. Sensitive files or runtime caches may be present when explicitly selected; check the generated config folder for private data.
 
 ---
 
@@ -418,6 +455,12 @@ function buildModpack({
   outDir = './build',
   distDir = './dist',
 }) {
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version)) {
+    throw new Error(`Invalid modpack version '${version}'; use semantic versioning such as 1.2.3`);
+  }
+  if (!/^[A-Za-z0-9_]+$/.test(name)) {
+    throw new Error('Invalid modpack name; use letters, numbers, and underscores only');
+  }
   const buildFolder = path.join(outDir, name);
   const zipFile = path.join(distDir, `${name}-${version}.zip`);
 
@@ -602,6 +645,10 @@ async function main() {
 
   const profiles = getAvailableProfiles(profilesDir);
 
+  if (profiles.length === 0) {
+    throw new Error(`No Valheim profiles with mods.yml found in ${profilesDir}`);
+  }
+
   if (opts.listProfiles) {
     console.log(`${c.bold}${c.cyan}Detected Valheim profiles at:${c.reset} ${profilesDir}\n`);
     for (const p of profiles) {
@@ -612,6 +659,9 @@ async function main() {
   }
 
   let selectedProfile = opts.profile || (profiles.includes('Default') ? 'Default' : profiles[0]);
+  if (!profiles.includes(selectedProfile)) {
+    throw new Error(`Profile '${selectedProfile}' was not found in ${profilesDir}`);
+  }
 
   if (opts.listMods) {
     const profilePath = path.join(profilesDir, selectedProfile);

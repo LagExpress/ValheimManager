@@ -1,11 +1,14 @@
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
-use std::time::Instant;
 
+use crate::appearance::{Palette, ThemePreset, UiPreferences};
 use crate::i18n::Language;
+use crate::modpack_config::{ModpackConfiguration, ModpackLibrary, SavedModChoice};
 use crate::packager::{build_modpack, BuildResult, ModpackOptions};
+use crate::platform_effects::PlatformEffects;
 use crate::profile::{
     get_gale_roots, get_r2modman_roots, list_profiles_in_dir, load_mods_from_profile,
     scan_profile_configs, ConfigCategory, ConfigItem, ModItem, ModManager,
@@ -15,7 +18,11 @@ use crate::sync::{
     self, LogLevel, PreviewResult, Progress, SyncConfig, SyncEvent, SyncLog, SyncMode, SyncRequest,
     SyncSummary, DEFAULT_IGNORED_PATTERNS, IGNORE_FILE_NAME,
 };
+use crate::ui_components::{self as components, Icon};
 use eframe::egui::{self, Color32, RichText, Ui};
+
+mod saved;
+use saved::{BuildAttempt, BuildVersionPrompt};
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum ActiveTab {
@@ -41,7 +48,7 @@ pub struct SyncUiState {
     pub running: bool,
     pub cancel: Option<Arc<AtomicBool>>,
     pub receiver: Option<Receiver<SyncEvent>>,
-    pub logs: Vec<SyncLog>,
+    pub logs: VecDeque<SyncLog>,
     pub progress: Option<Progress>,
     pub preview: Option<PreviewResult>,
     pub summary: Option<SyncSummary>,
@@ -54,10 +61,19 @@ pub struct SyncUiState {
     pub log_filter: Option<LogLevel>,
     pub log_search: String,
     pub log_autoscroll: bool,
-    pub copied_feedback: Option<Instant>,
+    pub preview_revision: u64,
+    pub logs_revision: u64,
 }
 
 impl SyncUiState {
+    fn push_log(&mut self, log: SyncLog) {
+        self.logs.push_back(log);
+        if self.logs.len() > 2000 {
+            self.logs.pop_front();
+        }
+        self.logs_revision = self.logs_revision.wrapping_add(1);
+    }
+
     fn new() -> Self {
         let (config, warning) = match SyncConfig::load() {
             Ok(config) => (config, None),
@@ -77,7 +93,7 @@ impl SyncUiState {
             running: false,
             cancel: None,
             receiver: None,
-            logs: Vec::new(),
+            logs: VecDeque::new(),
             progress: None,
             preview: None,
             summary: None,
@@ -88,7 +104,8 @@ impl SyncUiState {
             log_filter: None,
             log_search: String::new(),
             log_autoscroll: true,
-            copied_feedback: None,
+            preview_revision: 0,
+            logs_revision: 0,
         }
     }
 
@@ -116,6 +133,24 @@ impl SyncUiState {
 }
 
 pub struct ModpackApp {
+    modpack_library: ModpackLibrary,
+    modpack_library_path: PathBuf,
+    modpack_library_error: Option<String>,
+    always_increment_version: bool,
+    build_version_prompt: Option<BuildVersionPrompt>,
+    build_attempt: Option<BuildAttempt>,
+    preferences: UiPreferences,
+    theme: ThemePreset,
+    effects: PlatformEffects,
+    applied_theme: Option<(ThemePreset, bool)>,
+    initial_size_set: bool,
+    open_receiver: Option<Receiver<Result<(), String>>>,
+    data_revision: u64,
+    mod_filter: FilterCache,
+    config_filter: FilterCache,
+    preview_filter: FilterCache,
+    logs_filter: FilterCache,
+    log_layout: LogLayoutCache,
     // Language
     pub language: Language,
 
@@ -162,6 +197,22 @@ pub enum BuildEvent {
     Finished(Result<BuildResult, String>),
 }
 
+#[derive(Default)]
+struct FilterCache {
+    key: Option<(String, u64)>,
+    indices: Vec<usize>,
+}
+
+type LogLayoutKey = (String, u64, u32, u32, egui::FontId);
+
+#[derive(Default)]
+struct LogLayoutCache {
+    context: Option<egui::Context>,
+    key: Option<LogLayoutKey>,
+    galleys: Vec<Arc<egui::Galley>>,
+    offsets: Vec<f32>,
+}
+
 impl Default for ModpackApp {
     fn default() -> Self {
         let r2_roots = get_r2modman_roots();
@@ -184,6 +235,24 @@ impl Default for ModpackApp {
         let language = sync.config.language.unwrap_or(Language::English);
 
         let mut app = Self {
+            modpack_library: ModpackLibrary::default(),
+            modpack_library_path: ModpackLibrary::path(),
+            modpack_library_error: None,
+            always_increment_version: false,
+            build_version_prompt: None,
+            build_attempt: None,
+            preferences: UiPreferences::default(),
+            theme: ThemePreset::Dark,
+            effects: PlatformEffects::default(),
+            applied_theme: None,
+            initial_size_set: false,
+            open_receiver: None,
+            data_revision: 0,
+            mod_filter: FilterCache::default(),
+            config_filter: FilterCache::default(),
+            preview_filter: FilterCache::default(),
+            logs_filter: FilterCache::default(),
+            log_layout: LogLayoutCache::default(),
             language,
             mod_manager,
             profile_roots: roots,
@@ -209,13 +278,28 @@ impl Default for ModpackApp {
             sync,
         };
 
-        app.refresh_profiles();
+        app.restore_modpack_library();
         app
     }
 }
 
 impl ModpackApp {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        crate::appearance::install_fonts(&cc.egui_ctx);
+        let preferences = UiPreferences::load(&UiPreferences::path());
+        let theme = preferences.resolve(&cc.egui_ctx);
+        let app = Self {
+            preferences,
+            theme,
+            effects: PlatformEffects::new(cc),
+            ..Self::default()
+        };
+        Palette::new(theme, false).apply(&cc.egui_ctx, theme);
+        app
+    }
+
     pub fn refresh_profiles(&mut self) {
+        self.data_revision = self.data_revision.wrapping_add(1);
         if let Some(ref root) = self.selected_root {
             self.available_profiles = list_profiles_in_dir(root);
             if !self.available_profiles.is_empty() {
@@ -228,13 +312,20 @@ impl ModpackApp {
                 }
                 self.load_selected_profile_data();
             } else {
+                self.selected_profile.clear();
                 self.mods.clear();
                 self.configs.clear();
             }
+        } else {
+            self.available_profiles.clear();
+            self.selected_profile.clear();
+            self.mods.clear();
+            self.configs.clear();
         }
     }
 
     pub fn load_selected_profile_data(&mut self) {
+        self.data_revision = self.data_revision.wrapping_add(1);
         if let Some(ref root) = self.selected_root {
             let profile_path = root.join(&self.selected_profile);
             match load_mods_from_profile(&profile_path) {
@@ -243,10 +334,12 @@ impl ModpackApp {
                     self.status_message = None;
                 }
                 Err(e) => {
+                    self.mods.clear();
                     self.status_message = Some((format!("Error loading mods: {}", e), true));
                 }
             }
             self.configs = scan_profile_configs(&profile_path);
+            self.restore_saved_selections();
 
             if self.pack_name.is_empty() || self.pack_name == "Valheim_Modpack" {
                 self.pack_name = format!("{}_Modpack", self.selected_profile)
@@ -256,10 +349,24 @@ impl ModpackApp {
     }
 
     pub fn trigger_build(&mut self, ctx: &egui::Context) {
-        if self.building {
+        if self.building || self.build_version_prompt.is_some() {
             return;
         }
+        if let Err(error) = self.validate_build_request() {
+            self.status_message = Some((error, true));
+            return;
+        }
+        if self.always_increment_version {
+            self.start_versioned_build(ctx, true, true);
+        } else {
+            self.build_version_prompt = Some(BuildVersionPrompt {
+                next_version: crate::modpack_config::increment_patch(&self.pack_version),
+                always_increment: false,
+            });
+        }
+    }
 
+    fn launch_build(&mut self, ctx: &egui::Context) {
         let clean_name = self
             .pack_name
             .trim()
@@ -307,10 +414,13 @@ impl ModpackApp {
         let repaint_ctx = ctx.clone();
 
         std::thread::spawn(move || {
-            let res = build_modpack(&opts, Some(&|fraction, message| {
-                let _ = tx.send(BuildEvent::Progress(fraction, message.to_string()));
-                repaint_ctx.request_repaint();
-            }));
+            let res = build_modpack(
+                &opts,
+                Some(&|fraction, message| {
+                    let _ = tx.send(BuildEvent::Progress(fraction, message.to_string()));
+                    repaint_ctx.request_repaint();
+                }),
+            );
             let _ = tx.send(BuildEvent::Finished(res));
             repaint_ctx.request_repaint();
         });
@@ -327,7 +437,7 @@ impl ModpackApp {
 
     fn sync_error(&mut self, message: impl Into<String>) {
         let message = message.into();
-        self.sync.logs.push(SyncLog {
+        self.sync.push_log(SyncLog {
             level: LogLevel::Error,
             message: message.clone(),
         });
@@ -357,7 +467,7 @@ impl ModpackApp {
 
         if disconnected {
             if self.sync.running {
-                self.sync.logs.push(SyncLog {
+                self.sync.push_log(SyncLog {
                     level: LogLevel::Error,
                     message: "Sync worker stopped unexpectedly.".to_string(),
                 });
@@ -394,6 +504,7 @@ impl ModpackApp {
                 BuildEvent::Finished(result) => {
                     self.building = false;
                     self.build_receiver = None;
+                    let version_save_error = self.finish_build_version(result.is_ok()).err();
                     match result {
                         Ok(res) => {
                             self.build_progress = Some((1.0, "Complete!".to_string()));
@@ -409,6 +520,10 @@ impl ModpackApp {
                                 false,
                             ));
                             self.last_build_result = Some(res);
+                            if let Some(error) = version_save_error {
+                                self.status_message =
+                                    Some((format!("ZIP built, but {error}"), true));
+                            }
                         }
                         Err(e) => {
                             self.build_progress = None;
@@ -420,6 +535,12 @@ impl ModpackApp {
         }
 
         if disconnected {
+            if self.build_attempt.is_some() {
+                let _ = self.finish_build_version(false);
+                self.build_progress = None;
+                self.status_message =
+                    Some(("Build worker disconnected before completion".into(), true));
+            }
             self.building = false;
             self.build_receiver = None;
         }
@@ -428,15 +549,13 @@ impl ModpackApp {
     fn handle_sync_event(&mut self, event: SyncEvent) {
         match event {
             SyncEvent::Log(log) => {
-                self.sync.logs.push(log);
-                if self.sync.logs.len() > 2000 {
-                    self.sync.logs.remove(0);
-                }
+                self.sync.push_log(log);
             }
             SyncEvent::Progress(progress) => {
                 self.sync.progress = Some(progress);
             }
             SyncEvent::Preview(preview) => {
+                self.sync.preview_revision = self.sync.preview_revision.wrapping_add(1);
                 self.sync.preview = Some(preview);
             }
             SyncEvent::Finished(result) => {
@@ -478,7 +597,7 @@ impl ModpackApp {
                         self.sync.summary = Some(summary);
                     }
                     Err(e) => {
-                        self.sync.logs.push(SyncLog {
+                        self.sync.push_log(SyncLog {
                             level: LogLevel::Error,
                             message: e.clone(),
                         });
@@ -567,11 +686,13 @@ impl ModpackApp {
 
         self.sync.logs.clear();
         self.sync.preview = None;
+        self.sync.logs_revision = self.sync.logs_revision.wrapping_add(1);
+        self.sync.preview_revision = self.sync.preview_revision.wrapping_add(1);
         self.sync.summary = None;
         self.sync.progress = None;
 
         if let Err(e) = self.sync.persist() {
-            self.sync.logs.push(SyncLog {
+            self.sync.push_log(SyncLog {
                 level: LogLevel::Warning,
                 message: format!("Could not save sync settings: {}", e),
             });
@@ -598,7 +719,7 @@ impl ModpackApp {
         self.sync.running = true;
         self.sync.cancel = Some(cancel);
         self.sync.receiver = Some(receiver);
-        self.sync.logs.push(SyncLog {
+        self.sync.push_log(SyncLog {
             level: LogLevel::Info,
             message: format!("Starting {}...", mode.label()),
         });
@@ -608,1611 +729,4 @@ impl ModpackApp {
     }
 }
 
-impl eframe::App for ModpackApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Keep active heartbeat so compositor restore/unminimize immediately repaints
-        ctx.request_repaint_after(std::time::Duration::from_millis(500));
-
-        self.poll_sync_events();
-        self.poll_build_events();
-
-        // Top Navigation Bar
-        egui::TopBottomPanel::top("top_header").show(ctx, |ui| {
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.heading(
-                    RichText::new(self.language.app_title())
-                        .color(Color32::from_rgb(230, 180, 50))
-                        .strong(),
-                );
-                ui.label(RichText::new("v1.0.0").weak());
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // Language Switcher: [🌐 EN] / [🌐 ES]
-                    ui.horizontal(|ui| {
-                        let is_es = self.language == Language::Spanish;
-                        let is_en = self.language == Language::English;
-
-                        if ui.selectable_label(is_es, "🇪🇸 ES").clicked() && !is_es {
-                            self.language = Language::Spanish;
-                            self.sync.config.language = Some(Language::Spanish);
-                            let _ = self.sync.config.save();
-                        }
-                        if ui.selectable_label(is_en, "🇺🇸 EN").clicked() && !is_en {
-                            self.language = Language::English;
-                            self.sync.config.language = Some(Language::English);
-                            let _ = self.sync.config.save();
-                        }
-                    });
-
-                    ui.separator();
-
-                    if let Some(ref res) = self.last_build_result {
-                        if ui.button(self.language.btn_open_output()).clicked() {
-                            let _ = opener::reveal(&res.zip_path);
-                        }
-                    }
-
-                    if self.building {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            if let Some((frac, ref msg)) = self.build_progress {
-                                ui.label(
-                                    RichText::new(format!("{:.0}%", frac * 100.0))
-                                        .strong()
-                                        .color(Color32::from_rgb(230, 180, 50)),
-                                )
-                                .on_hover_text(msg);
-                            } else {
-                                ui.label(
-                                    RichText::new(self.language.building_button_label())
-                                        .strong()
-                                        .color(Color32::from_rgb(230, 180, 50)),
-                                );
-                            }
-                        });
-                    } else if ui
-                        .button(
-                            RichText::new(self.language.btn_build_quick())
-                                .strong()
-                                .color(Color32::WHITE),
-                        )
-                        .on_hover_text("Build Thunderstore zip archive now")
-                        .clicked()
-                    {
-                        self.trigger_build(ctx);
-                    }
-                });
-            });
-            ui.add_space(4.0);
-
-            // Tab bar
-            ui.horizontal_wrapped(|ui| {
-                let tabs = [
-                    (ActiveTab::ProfileMetadata, self.language.tab_profile().to_string()),
-                    (
-                        ActiveTab::Mods,
-                        format!(
-                            "{} ({})",
-                            self.language.tab_mods(),
-                            self.mods.iter().filter(|m| m.selected).count()
-                        ),
-                    ),
-                    (
-                        ActiveTab::Configs,
-                        format!(
-                            "{} ({})",
-                            self.language.tab_configs(),
-                            self.configs.iter().filter(|c| c.selected).count()
-                        ),
-                    ),
-                    (ActiveTab::Build, self.language.tab_build().to_string()),
-                    (ActiveTab::ServerSync, self.language.tab_server_sync().to_string()),
-                    (ActiveTab::Help, self.language.tab_help().to_string()),
-                ];
-
-                for (tab, label) in tabs {
-                    let is_active = self.active_tab == tab;
-                    if ui
-                        .selectable_label(is_active, RichText::new(label).strong())
-                        .clicked()
-                    {
-                        self.active_tab = tab;
-                    }
-                }
-            });
-            ui.add_space(4.0);
-        });
-
-        // Bottom Status Bar
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                if let Some((ref msg, is_err)) = self.status_message {
-                    let color = if is_err {
-                        Color32::from_rgb(255, 90, 90)
-                    } else {
-                        Color32::from_rgb(90, 220, 90)
-                    };
-                    ui.label(RichText::new(msg).color(color));
-                } else {
-                    ui.label(
-                        RichText::new(self.language.status_summary(
-                            self.mod_manager.label(),
-                            &self.selected_profile,
-                            self.mods.iter().filter(|m| m.selected).count(),
-                            self.configs.iter().filter(|c| c.selected).count(),
-                        ))
-                        .weak(),
-                    );
-                }
-            });
-        });
-
-        // Central Panel
-        egui::CentralPanel::default().show(ctx, |ui| match self.active_tab {
-            ActiveTab::ProfileMetadata => self.ui_profile_metadata(ui),
-            ActiveTab::Mods => self.ui_mods_selection(ui),
-            ActiveTab::Configs => self.ui_configs_selection(ui),
-            ActiveTab::Build => self.ui_build_export(ui),
-            ActiveTab::ServerSync => self.ui_server_sync(ui),
-            ActiveTab::Help => self.ui_help(ui),
-        });
-    }
-}
-
-impl ModpackApp {
-    fn ui_profile_metadata(&mut self, ui: &mut Ui) {
-        egui::ScrollArea::vertical()
-            .id_salt("profile_metadata_scroll")
-            .show(ui, |ui| {
-            ui.add_space(8.0);
-            ui.group(|ui| {
-                ui.heading(self.language.heading_mod_manager());
-                ui.separator();
-
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(self.language.label_mod_manager()).strong());
-
-                    if ui
-                        .selectable_label(self.mod_manager == ModManager::R2Modman, "r2modman")
-                        .clicked()
-                    {
-                        self.mod_manager = ModManager::R2Modman;
-                        let roots = get_r2modman_roots();
-                        self.selected_root = roots.first().cloned();
-                        self.refresh_profiles();
-                    }
-
-                    if ui
-                        .selectable_label(self.mod_manager == ModManager::Gale, "Gale")
-                        .clicked()
-                    {
-                        self.mod_manager = ModManager::Gale;
-                        let roots = get_gale_roots();
-                        self.selected_root = roots.first().cloned();
-                        self.refresh_profiles();
-                    }
-
-                    if ui
-                        .selectable_label(self.mod_manager == ModManager::Custom, self.language.label_custom_path())
-                        .clicked()
-                    {
-                        self.mod_manager = ModManager::Custom;
-                    }
-                });
-
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.label(self.language.label_profiles_dir());
-                    let current_dir_display = self
-                        .selected_root
-                        .as_ref()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|| self.language.not_found().to_string());
-                    ui.monospace(current_dir_display);
-
-                    if ui.button(self.language.btn_browse()).clicked() {
-                        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                            self.selected_root = Some(folder);
-                            self.mod_manager = ModManager::Custom;
-                            self.refresh_profiles();
-                        }
-                    }
-                });
-
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.label(self.language.label_selected_profile());
-                    let current_profile = self.selected_profile.clone();
-                    let mut changed_profile = None;
-                    egui::ComboBox::from_id_salt("profile_select")
-                        .selected_text(&current_profile)
-                        .show_ui(ui, |ui| {
-                            for p in &self.available_profiles {
-                                if ui
-                                    .selectable_label(self.selected_profile == *p, p)
-                                    .clicked()
-                                {
-                                    changed_profile = Some(p.clone());
-                                }
-                            }
-                        });
-                    if let Some(p) = changed_profile {
-                        self.selected_profile = p;
-                        self.load_selected_profile_data();
-                    }
-
-                    if ui.button(self.language.btn_reload()).clicked() {
-                        self.refresh_profiles();
-                    }
-
-                    let enabled_count = self.mods.iter().filter(|m| m.enabled).count();
-                    ui.label(
-                        RichText::new(self.language.label_profile_stats(self.mods.len(), enabled_count))
-                            .weak(),
-                    );
-                });
-            });
-
-            ui.add_space(12.0);
-
-            ui.group(|ui| {
-                ui.heading(self.language.heading_metadata());
-                ui.separator();
-
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(self.language.heading_output_dir()).strong());
-                    let out_display = self.output_dir.display().to_string();
-                    ui.monospace(out_display);
-                    if ui.button(self.language.btn_browse()).clicked() {
-                        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                            self.output_dir = folder;
-                        }
-                    }
-                });
-                ui.label(RichText::new(self.language.label_output_dir_desc()).weak());
-
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.label(self.language.label_package_name());
-                    let mut name = self.pack_name.clone();
-                    if ui.text_edit_singleline(&mut name).changed() {
-                        self.pack_name =
-                            name.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
-                    }
-                    ui.label(RichText::new("(Letters, numbers, underscores)").weak());
-                });
-
-                ui.horizontal(|ui| {
-                    ui.label(self.language.label_version());
-                    ui.text_edit_singleline(&mut self.pack_version);
-                    ui.label(RichText::new("(SemVer X.Y.Z, e.g. 1.0.0)").weak());
-                });
-
-                ui.horizontal(|ui| {
-                    ui.label(self.language.label_description());
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.pack_description).desired_width(400.0),
-                    );
-                });
-
-                ui.horizontal(|ui| {
-                    ui.label(self.language.label_website());
-                    ui.add(egui::TextEdit::singleline(&mut self.pack_website).desired_width(400.0));
-                });
-
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.label(self.language.label_icon());
-                    if let Some(ref icon) = self.custom_icon_path {
-                        ui.label(
-                            RichText::new(icon.file_name().unwrap_or_default().to_string_lossy())
-                                .strong(),
-                        );
-                        if ui.button(self.language.btn_remove()).clicked() {
-                            self.custom_icon_path = None;
-                        }
-                    } else {
-                        ui.label(
-                            RichText::new(self.language.label_default_icon())
-                                .color(Color32::from_rgb(230, 180, 50)),
-                        );
-                        if ui.button(self.language.btn_browse()).clicked() {
-                            if let Some(file) = rfd::FileDialog::new()
-                                .add_filter("PNG Image", &["png"])
-                                .pick_file()
-                            {
-                                self.custom_icon_path = Some(file);
-                            }
-                        }
-                    }
-                });
-            });
-
-            ui.add_space(16.0);
-            ui.horizontal(|ui| {
-                if ui
-                    .button(RichText::new(self.language.btn_proceed_to_mods()).strong())
-                    .clicked()
-                {
-                    self.active_tab = ActiveTab::Mods;
-                }
-            });
-        });
-    }
-
-    fn ui_mods_selection(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.heading(self.language.heading_mods());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(self.language.btn_deselect_all()).clicked() {
-                    for m in &mut self.mods {
-                        m.selected = false;
-                    }
-                }
-                if ui.button(self.language.btn_select_enabled()).clicked() {
-                    for m in &mut self.mods {
-                        m.selected = m.enabled;
-                    }
-                }
-                if ui.button(self.language.btn_select_all()).clicked() {
-                    for m in &mut self.mods {
-                        m.selected = true;
-                    }
-                }
-            });
-        });
-
-        ui.horizontal(|ui| {
-            ui.label("🔍");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.mod_search)
-                    .hint_text(self.language.hint_search_mods())
-                    .desired_width(260.0),
-            );
-            if !self.mod_search.is_empty() && ui.button("❌").clicked() {
-                self.mod_search.clear();
-            }
-            let selected_count = self.mods.iter().filter(|m| m.selected).count();
-            ui.label(
-                RichText::new(self.language.label_mods_selected(selected_count, self.mods.len()))
-                    .strong(),
-            );
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(RichText::new(self.language.btn_proceed_to_configs()).strong()).clicked() {
-                    self.active_tab = ActiveTab::Configs;
-                }
-            });
-        });
-        ui.separator();
-
-        let search = self.mod_search.to_lowercase();
-
-        egui::ScrollArea::vertical()
-            .id_salt("mods_tab_scroll")
-            .show(ui, |ui| {
-            egui::Grid::new("mods_table")
-                .striped(true)
-                .spacing([12.0, 6.0])
-                .show(ui, |ui| {
-                    ui.label(RichText::new("✓").strong());
-                    ui.label(RichText::new("Mod Name").strong());
-                    ui.label(RichText::new("Author").strong());
-                    ui.label(RichText::new("Version").strong());
-                    ui.label(RichText::new("Thunderstore ID").strong());
-                    ui.end_row();
-
-                    for m in &mut self.mods {
-                        if !search.is_empty()
-                            && !m.name.to_lowercase().contains(&search)
-                            && !m.display_name.to_lowercase().contains(&search)
-                            && !m.author_name.to_lowercase().contains(&search)
-                        {
-                            continue;
-                        }
-
-                        ui.checkbox(&mut m.selected, "");
-                        let name_label = ui.label(RichText::new(&m.display_name).strong());
-                        if !m.description.is_empty() {
-                            name_label.on_hover_text(&m.description);
-                        }
-                        ui.label(&m.author_name);
-
-                        // Editable version
-                        let ver_edit = ui.add(
-                            egui::TextEdit::singleline(&mut m.current_version).desired_width(70.0),
-                        );
-                        if m.current_version != m.original_version {
-                            ver_edit
-                                .on_hover_text(format!("Original version: {}", m.original_version));
-                        }
-
-                        ui.monospace(&m.name);
-                        ui.end_row();
-                    }
-                });
-        });
-    }
-
-    fn ui_configs_selection(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.heading(self.language.heading_configs());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(self.language.btn_deselect_all()).clicked() {
-                    for c in &mut self.configs {
-                        c.selected = false;
-                    }
-                }
-                if ui.button("Select Safe Only (Recommended)").clicked() {
-                    for c in &mut self.configs {
-                        c.selected = c.category == ConfigCategory::Safe;
-                    }
-                }
-                if ui.button(self.language.btn_select_all()).clicked() {
-                    for c in &mut self.configs {
-                        c.selected = true;
-                    }
-                }
-            });
-        });
-
-        ui.horizontal(|ui| {
-            ui.label("🔍");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.config_search)
-                    .hint_text(self.language.hint_search_configs())
-                    .desired_width(260.0),
-            );
-            if !self.config_search.is_empty() && ui.button("❌").clicked() {
-                self.config_search.clear();
-            }
-            let selected_count = self.configs.iter().filter(|c| c.selected).count();
-            ui.label(
-                RichText::new(self.language.label_configs_selected(selected_count, self.configs.len()))
-                    .strong(),
-            );
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(RichText::new(self.language.btn_proceed_to_build()).strong()).clicked() {
-                    self.active_tab = ActiveTab::Build;
-                }
-            });
-        });
-
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("🟢 Safe").color(Color32::from_rgb(100, 220, 100)));
-            ui.label("|");
-            ui.label(
-                RichText::new("🔴 Sensitive / Passwords (Auto-excluded)")
-                    .color(Color32::from_rgb(255, 100, 100)),
-            );
-            ui.label("|");
-            ui.label(
-                RichText::new("🟡 Runtime Cache / Reports (Auto-excluded)")
-                    .color(Color32::from_rgb(240, 200, 80)),
-            );
-        });
-        ui.separator();
-
-        let search = self.config_search.to_lowercase();
-
-        egui::ScrollArea::vertical()
-            .id_salt("configs_tab_scroll")
-            .show(ui, |ui| {
-            egui::Grid::new("configs_table")
-                .striped(true)
-                .spacing([12.0, 6.0])
-                .show(ui, |ui| {
-                    ui.label(RichText::new("✓").strong());
-                    ui.label(RichText::new("Status").strong());
-                    ui.label(RichText::new("Name").strong());
-                    ui.label(RichText::new("Type").strong());
-                    ui.label(RichText::new("Size").strong());
-                    ui.end_row();
-
-                    for cfg in &mut self.configs {
-                        if !search.is_empty() && !cfg.name.to_lowercase().contains(&search) {
-                            continue;
-                        }
-
-                        ui.checkbox(&mut cfg.selected, "");
-
-                        let badge_color = match cfg.category {
-                            ConfigCategory::Safe => Color32::from_rgb(100, 220, 100),
-                            ConfigCategory::Sensitive => Color32::from_rgb(255, 100, 100),
-                            ConfigCategory::Cache => Color32::from_rgb(240, 200, 80),
-                        };
-                        ui.label(RichText::new(cfg.category.label()).color(badge_color));
-
-                        ui.monospace(&cfg.name);
-                        ui.label(if cfg.is_dir { "Directory" } else { "File" });
-
-                        if cfg.is_dir {
-                            ui.label("-");
-                        } else {
-                            ui.label(format!("{:.1} KB", cfg.size as f64 / 1024.0));
-                        }
-                        ui.end_row();
-                    }
-                });
-        });
-    }
-
-    fn ui_build_export(&mut self, ui: &mut Ui) {
-        egui::ScrollArea::vertical()
-            .id_salt("build_export_scroll")
-            .show(ui, |ui| {
-            ui.add_space(8.0);
-            ui.group(|ui| {
-                ui.heading(self.language.heading_build());
-                ui.separator();
-
-                let selected_mods_count = self.mods.iter().filter(|m| m.selected).count();
-                let selected_configs_count = self.configs.iter().filter(|c| c.selected).count();
-
-                ui.label(
-                    RichText::new(format!(
-                        "Package: {} v{}",
-                        self.pack_name, self.pack_version
-                    ))
-                    .heading(),
-                );
-                ui.label(format!(
-                    "• Source: {} ({})",
-                    self.mod_manager.label(),
-                    self.selected_profile
-                ));
-                ui.label(format!(
-                    "• Mods to include: {} dependencies",
-                    selected_mods_count
-                ));
-                ui.label(format!(
-                    "• Configurations to include: {} files/folders",
-                    selected_configs_count
-                ));
-
-                ui.horizontal(|ui| {
-                    ui.label(format!("• Output Directory: {}", self.output_dir.display()));
-                    if ui.button(self.language.btn_browse()).clicked() {
-                        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                            self.output_dir = folder;
-                        }
-                    }
-                });
-                ui.label(format!(
-                    "• Target ZIP: {}/{}-{}.zip",
-                    self.output_dir.display(),
-                    self.pack_name,
-                    self.pack_version
-                ));
-
-                ui.add_space(8.0);
-                if self.building {
-                    let (frac, msg) = self
-                        .build_progress
-                        .as_ref()
-                        .cloned()
-                        .unwrap_or((0.0, String::new()));
-                    ui.label(
-                        RichText::new(self.language.compiling_modpack())
-                            .strong()
-                            .color(Color32::from_rgb(230, 180, 50)),
-                    );
-                    let progress_bar = egui::ProgressBar::new(frac)
-                        .show_percentage()
-                        .animate(true)
-                        .text(format!("{:.0}% - {}", frac * 100.0, msg));
-                    ui.add(progress_bar);
-                    ui.add_space(6.0);
-                    let _ = ui.add_enabled(
-                        false,
-                        egui::Button::new(
-                            RichText::new(self.language.building_button_label())
-                                .heading()
-                                .color(Color32::LIGHT_GRAY),
-                        ),
-                    );
-                } else if ui
-                    .button(
-                        RichText::new(self.language.btn_build_main())
-                            .heading()
-                            .color(Color32::WHITE),
-                    )
-                    .clicked()
-                {
-                    self.trigger_build(ui.ctx());
-                }
-            });
-
-            if let Some(ref res) = self.last_build_result {
-                ui.add_space(16.0);
-                ui.group(|ui| {
-                    ui.heading(
-                        RichText::new("🎉 Build Successful!").color(Color32::from_rgb(90, 220, 90)),
-                    );
-                    ui.separator();
-                    ui.label(format!("{}: {}", self.language.label_zip_archive(), res.zip_path.display()));
-                    ui.label(format!(
-                        "Size: {:.1} KB",
-                        (res.zip_size_bytes as f64) / 1024.0
-                    ));
-                    ui.label(format!("{}: {}", self.language.label_unpacked_folder(), res.build_dir.display()));
-
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if ui.button(self.language.btn_open_folder()).clicked() {
-                            let _ = opener::reveal(&res.zip_path);
-                        }
-                    });
-                });
-            }
-        });
-    }
-
-    fn ui_server_sync(&mut self, ui: &mut Ui) {
-        egui::ScrollArea::vertical()
-            .id_salt("sync_tab_outer_scroll")
-            .show(ui, |ui| {
-            ui.add_space(8.0);
-            ui.heading(self.language.sync_title());
-            ui.label(self.language.sync_desc());
-
-            if let Some(warning) = self.sync.warning.clone() {
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.colored_label(Color32::from_rgb(230, 180, 50), warning);
-                    if ui.small_button(self.language.btn_dismiss()).clicked() {
-                        self.sync.warning = None;
-                    }
-                });
-            }
-
-            ui.add_space(10.0);
-            let avail_width = ui.available_width();
-            if avail_width > 860.0 {
-                ui.columns(2, |columns| {
-                    self.ui_sync_left_column(&mut columns[0]);
-                    self.ui_sync_right_column(&mut columns[1]);
-                });
-            } else {
-                self.ui_sync_left_column(ui);
-                ui.add_space(12.0);
-                self.ui_sync_right_column(ui);
-            }
-        });
-    }
-
-    fn ui_sync_left_column(&mut self, ui: &mut Ui) {
-        let source = self.sync_source_bepinex();
-        ui.group(|ui| {
-            ui.heading(self.language.heading_source_profile());
-            ui.separator();
-            match source {
-                Some(ref path) => {
-                    ui.label(format!("Profile BepInEx: {}", path.display()));
-                    if path.is_dir() {
-                        ui.colored_label(
-                            Color32::from_rgb(90, 220, 90),
-                            self.language.source_folder_found(),
-                        );
-                    } else {
-                        ui.colored_label(
-                            Color32::from_rgb(220, 90, 90),
-                            self.language.source_folder_missing(),
-                        );
-                    }
-                }
-                None => {
-                    ui.colored_label(
-                        Color32::from_rgb(220, 90, 90),
-                        self.language.no_profile_selected(),
-                    );
-                }
-            }
-        });
-
-        ui.add_space(10.0);
-        ui.group(|ui| {
-            ui.heading(self.language.heading_connection());
-            ui.separator();
-            egui::Grid::new("sync_connection_grid")
-                .num_columns(2)
-                .spacing([10.0, 6.0])
-                .show(ui, |ui| {
-                    ui.label(self.language.label_host());
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.sync.config.host)
-                            .desired_width(190.0)
-                            .hint_text("example.com or 192.168.1.10"),
-                    );
-                    ui.end_row();
-
-                    ui.label(self.language.label_port());
-                    ui.add(
-                        egui::DragValue::new(&mut self.sync.config.port)
-                            .range(1..=65535),
-                    );
-                    ui.end_row();
-
-                    ui.label(self.language.label_username());
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.sync.config.username)
-                            .desired_width(190.0),
-                    );
-                    ui.end_row();
-
-                    ui.label(self.language.label_password());
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.sync.config.password)
-                                .password(!self.sync.show_password)
-                                .desired_width(110.0),
-                        );
-                        ui.checkbox(&mut self.sync.show_password, self.language.label_show_password());
-                    });
-                    ui.end_row();
-
-                    ui.label(self.language.label_staging_dir());
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.sync.config.staging_dir)
-                                .desired_width(130.0),
-                        );
-                        if ui.button(self.language.btn_browse()).clicked() {
-                            if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                                self.sync.config.staging_dir = folder.display().to_string();
-                                self.sync.reload_ignore();
-                            }
-                        }
-                    });
-                    ui.end_row();
-                });
-
-            ui.add_space(4.0);
-            ui.checkbox(
-                &mut self.sync.config.auto_refresh_staging,
-                self.language.chk_auto_refresh(),
-            );
-            ui.label(
-                RichText::new(self.language.desc_auto_refresh())
-                    .weak(),
-            );
-
-            ui.add_space(6.0);
-            if ui.button(self.language.btn_save_settings()).clicked() {
-                match self.sync.persist() {
-                    Ok(()) => {
-                        self.status_message =
-                            Some(("Server sync settings saved.".to_string(), false));
-                    }
-                    Err(e) => self.sync_error(format!("Could not save settings: {}", e)),
-                }
-            }
-        });
-
-        ui.add_space(10.0);
-        ui.group(|ui| {
-            ui.heading(self.language.heading_actions());
-            ui.separator();
-
-            let running = self.sync.running;
-            ui.add_enabled_ui(!running, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .button(self.language.btn_action_preview())
-                        .on_hover_text(self.language.tip_action_preview())
-                        .clicked()
-                    {
-                        self.start_sync(SyncMode::Preview, ui.ctx());
-                    }
-                    if ui
-                        .button(self.language.btn_action_sync())
-                        .on_hover_text(self.language.tip_action_sync())
-                        .clicked()
-                    {
-                        self.start_sync(SyncMode::SyncChanges, ui.ctx());
-                    }
-                    if ui
-                        .button(self.language.btn_action_force())
-                        .on_hover_text(self.language.tip_action_force())
-                        .clicked()
-                    {
-                        self.start_sync(SyncMode::ForceAll, ui.ctx());
-                    }
-                    if ui
-                        .button(self.language.btn_action_upload_only())
-                        .on_hover_text(self.language.tip_action_upload_only())
-                        .clicked()
-                    {
-                        self.start_sync(SyncMode::UploadOnly, ui.ctx());
-                    }
-                });
-                ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .button(self.language.btn_action_wrapper())
-                        .on_hover_text(self.language.tip_action_wrapper())
-                        .clicked()
-                    {
-                        self.start_sync(SyncMode::CheckWrapper, ui.ctx());
-                    }
-                    if ui
-                        .button(self.language.btn_action_refresh())
-                        .on_hover_text(self.language.tip_action_refresh())
-                        .clicked()
-                    {
-                        self.start_sync(SyncMode::RefreshStaging, ui.ctx());
-                    }
-                    if ui
-                        .button(self.language.btn_action_test())
-                        .on_hover_text(self.language.tip_action_test())
-                        .clicked()
-                    {
-                        self.start_sync(SyncMode::TestConnection, ui.ctx());
-                    }
-                });
-            });
-
-            if running {
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("Sync running...");
-                    let cancellable = matches!(
-                        self.sync.active_mode,
-                        Some(SyncMode::SyncChanges | SyncMode::ForceAll | SyncMode::UploadOnly)
-                    );
-                    if cancellable {
-                        if let Some(cancel) = &self.sync.cancel {
-                            if ui.button("⏹ Cancel").clicked() {
-                                cancel.store(true, Ordering::Relaxed);
-                            }
-                        }
-                    }
-                });
-            }
-
-            if let Some(progress) = &self.sync.progress {
-                let fraction = if progress.total == 0 {
-                    0.0
-                } else {
-                    progress.current as f32 / progress.total as f32
-                };
-                ui.add(
-                    egui::ProgressBar::new(fraction).text(format!(
-                        "{} ({}/{})",
-                        progress.label, progress.current, progress.total
-                    )),
-                );
-            }
-        });
-
-        ui.add_space(10.0);
-        ui.group(|ui| {
-            ui.heading(self.language.heading_ignore());
-            ui.label(self.language.desc_ignore());
-            ui.add(
-                egui::TextEdit::multiline(&mut self.sync.ignore_text)
-                    .desired_rows(6)
-                    .desired_width(f32::INFINITY)
-                    .code_editor(),
-            );
-            ui.horizontal_wrapped(|ui| {
-                if ui.button(self.language.btn_reset_defaults()).clicked() {
-                    self.sync.ignore_text = format!(
-                        "{}\n",
-                        DEFAULT_IGNORED_PATTERNS.join("\n")
-                    );
-                }
-                if ui.button(self.language.btn_reload_staging()).clicked() {
-                    self.sync.reload_ignore();
-                }
-                if ui.button(self.language.btn_save_ignore()).clicked() {
-                    match self.sync.persist() {
-                        Ok(()) => {
-                            self.status_message =
-                                Some(("Ignore file saved.".to_string(), false));
-                        }
-                        Err(e) => self.sync_error(format!("Could not save ignore file: {}", e)),
-                    }
-                }
-            });
-        });
-    }
-
-    fn ui_sync_right_column(&mut self, ui: &mut Ui) {
-        // Modern Preview Section (UI/UX Redesign - square)
-        self.ui_sync_preview_dashboard(ui);
-
-        // Modern Execution Summary (UI/UX Redesign)
-        self.ui_sync_execution_summary(ui);
-
-        // Modern Terminal Logs Console (UI/UX Redesign - square)
-        self.ui_sync_logs_console(ui);
-    }
-
-    // Modern Preview Dashboard: Stat Tiles & Interactive Changes Browser
-    fn ui_sync_preview_dashboard(&mut self, ui: &mut Ui) {
-        ui.group(|ui| {
-            ui.heading(self.language.heading_preview());
-            ui.separator();
-
-            let preview = match &self.sync.preview {
-                Some(p) => p.clone(),
-                None => {
-                    egui::Frame::none()
-                        .fill(Color32::from_rgb(20, 22, 28))
-                        .rounding(egui::Rounding::same(6.0))
-                        .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(38, 42, 54)))
-                        .inner_margin(egui::Margin::same(16.0))
-                        .show(ui, |ui| {
-                            ui.vertical_centered(|ui| {
-                                ui.add_space(8.0);
-                                ui.label(RichText::new("🔍").size(28.0));
-                                ui.add_space(4.0);
-                                ui.label(
-                                    RichText::new(self.language.placeholder_no_preview())
-                                        .weak()
-                                        .size(13.0),
-                                );
-                                ui.add_space(8.0);
-                            });
-                        });
-                    return;
-                }
-            };
-
-            // 1. Stat Cards Row (Uniform columns spanning 100% width)
-            let (wrapper_status_text, wrapper_color) = match preview.wrapper.status {
-                WrapperStatus::Intact => (
-                    self.language.wrapper_intact(),
-                    Color32::from_rgb(90, 220, 90),
-                ),
-                WrapperStatus::ElfNeedsRename => (
-                    self.language.wrapper_rename_needed(),
-                    Color32::from_rgb(240, 180, 50),
-                ),
-                _ => (
-                    self.language.wrapper_missing(),
-                    Color32::from_rgb(240, 80, 80),
-                ),
-            };
-            let sym_text = if preview.wrapper.symlink_present {
-                self.language.symlink_ok()
-            } else {
-                self.language.symlink_missing()
-            };
-
-            let render_card = |ui: &mut Ui,
-                               bg: Color32,
-                               stroke: Color32,
-                               icon: &str,
-                               icon_color: Color32,
-                               title: &str,
-                               title_color: Color32,
-                               sub: &str| {
-                egui::Frame::group(ui.style())
-                    .rounding(egui::Rounding::same(6.0))
-                    .fill(bg)
-                    .stroke(egui::Stroke::new(1.0_f32, stroke))
-                    .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.set_min_height(46.0);
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(icon).size(22.0).color(icon_color));
-                            ui.vertical(|ui| {
-                                ui.label(
-                                    RichText::new(title)
-                                        .strong()
-                                        .size(15.0)
-                                        .color(title_color),
-                                );
-                                ui.label(RichText::new(sub).small().weak());
-                            });
-                        });
-                    });
-            };
-
-            let avail_w = ui.available_width();
-            if avail_w >= 540.0 {
-                ui.columns(4, |cols| {
-                    render_card(
-                        &mut cols[0],
-                        Color32::from_rgb(20, 36, 26),
-                        Color32::from_rgb(45, 140, 75),
-                        "⬆",
-                        Color32::from_rgb(90, 220, 110),
-                        &format!("{}", preview.uploads.len()),
-                        Color32::from_rgb(90, 220, 110),
-                        self.language.badge_uploads(),
-                    );
-                    render_card(
-                        &mut cols[1],
-                        Color32::from_rgb(38, 22, 22),
-                        Color32::from_rgb(180, 50, 50),
-                        "🗑",
-                        Color32::from_rgb(240, 90, 90),
-                        &format!("{}", preview.deletions.len()),
-                        Color32::from_rgb(240, 90, 90),
-                        self.language.badge_deletions(),
-                    );
-                    render_card(
-                        &mut cols[2],
-                        Color32::from_rgb(24, 26, 32),
-                        Color32::from_rgb(45, 50, 65),
-                        "📁",
-                        Color32::WHITE,
-                        &format!("{}/{}", preview.local_count, preview.remote_count),
-                        Color32::WHITE,
-                        &format!("{}/{}", self.language.badge_local(), self.language.badge_remote()),
-                    );
-                    render_card(
-                        &mut cols[3],
-                        Color32::from_rgb(24, 26, 32),
-                        Color32::from_rgb(45, 50, 65),
-                        "🛡",
-                        Color32::WHITE,
-                        wrapper_status_text,
-                        wrapper_color,
-                        sym_text,
-                    );
-                });
-            } else {
-                ui.columns(2, |cols| {
-                    render_card(
-                        &mut cols[0],
-                        Color32::from_rgb(20, 36, 26),
-                        Color32::from_rgb(45, 140, 75),
-                        "⬆",
-                        Color32::from_rgb(90, 220, 110),
-                        &format!("{}", preview.uploads.len()),
-                        Color32::from_rgb(90, 220, 110),
-                        self.language.badge_uploads(),
-                    );
-                    render_card(
-                        &mut cols[1],
-                        Color32::from_rgb(38, 22, 22),
-                        Color32::from_rgb(180, 50, 50),
-                        "🗑",
-                        Color32::from_rgb(240, 90, 90),
-                        &format!("{}", preview.deletions.len()),
-                        Color32::from_rgb(240, 90, 90),
-                        self.language.badge_deletions(),
-                    );
-                });
-                ui.add_space(6.0);
-                ui.columns(2, |cols| {
-                    render_card(
-                        &mut cols[0],
-                        Color32::from_rgb(24, 26, 32),
-                        Color32::from_rgb(45, 50, 65),
-                        "📁",
-                        Color32::WHITE,
-                        &format!("{}/{}", preview.local_count, preview.remote_count),
-                        Color32::WHITE,
-                        &format!("{}/{}", self.language.badge_local(), self.language.badge_remote()),
-                    );
-                    render_card(
-                        &mut cols[1],
-                        Color32::from_rgb(24, 26, 32),
-                        Color32::from_rgb(45, 50, 65),
-                        "🛡",
-                        Color32::WHITE,
-                        wrapper_status_text,
-                        wrapper_color,
-                        sym_text,
-                    );
-                });
-            }
-
-            // Warnings from wrapper (if any)
-            for warning in &preview.wrapper.warnings {
-                ui.add_space(2.0);
-                ui.colored_label(Color32::from_rgb(230, 180, 50), format!("⚠️ {}", warning));
-            }
-
-            ui.add_space(8.0);
-
-            // 2. Interactive Changes Browser (Tabs on Left, Search on Right)
-            let all_count = preview.uploads.len() + preview.deletions.len();
-            ui.horizontal(|ui| {
-                if ui
-                    .selectable_label(
-                        self.sync.preview_tab == PreviewTab::All,
-                        self.language.tab_all_changes(all_count),
-                    )
-                    .clicked()
-                {
-                    self.sync.preview_tab = PreviewTab::All;
-                }
-                if ui
-                    .selectable_label(
-                        self.sync.preview_tab == PreviewTab::Uploads,
-                        self.language.tab_uploads(preview.uploads.len()),
-                    )
-                    .clicked()
-                {
-                    self.sync.preview_tab = PreviewTab::Uploads;
-                }
-                if ui
-                    .selectable_label(
-                        self.sync.preview_tab == PreviewTab::Deletions,
-                        self.language.tab_deletions(preview.deletions.len()),
-                    )
-                    .clicked()
-                {
-                    self.sync.preview_tab = PreviewTab::Deletions;
-                }
-
-                // Search pinned to the right edge
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label("🔍");
-                    if !self.sync.preview_search.is_empty() && ui.small_button("✕").clicked() {
-                        self.sync.preview_search.clear();
-                    }
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.sync.preview_search)
-                            .hint_text(self.language.hint_search_changes())
-                            .desired_width(180.0),
-                    );
-                });
-            });
-
-            ui.add_space(4.0);
-
-            if all_count == 0 {
-                egui::Frame::none()
-                    .fill(Color32::from_rgb(18, 30, 22))
-                    .rounding(egui::Rounding::same(6.0))
-                    .inner_margin(egui::Margin::same(10.0))
-                    .show(ui, |ui| {
-                        ui.label(
-                            RichText::new(self.language.msg_no_changes())
-                                .color(Color32::from_rgb(90, 220, 110))
-                                .strong(),
-                        );
-                    });
-            } else {
-                let search = self.sync.preview_search.to_lowercase();
-                let items_to_show: Vec<(bool, &String)> = match self.sync.preview_tab {
-                    PreviewTab::All => {
-                        let mut list = Vec::new();
-                        for u in &preview.uploads {
-                            list.push((true, u));
-                        }
-                        for d in &preview.deletions {
-                            list.push((false, d));
-                        }
-                        list
-                    }
-                    PreviewTab::Uploads => preview.uploads.iter().map(|u| (true, u)).collect(),
-                    PreviewTab::Deletions => preview.deletions.iter().map(|d| (false, d)).collect(),
-                };
-
-                let filtered: Vec<_> = items_to_show
-                    .into_iter()
-                    .filter(|(_, path)| search.is_empty() || path.to_lowercase().contains(&search))
-                    .collect();
-
-                if filtered.is_empty() {
-                    ui.label(RichText::new(self.language.msg_no_changes_filter()).weak());
-                } else {
-                    let frame_res = egui::Frame::none()
-                        .fill(Color32::from_rgb(16, 18, 24))
-                        .rounding(egui::Rounding::same(6.0))
-                        .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(32, 36, 46)))
-                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                        .show(ui, |ui| {
-                            egui::ScrollArea::vertical()
-                                .id_salt("sync_preview_changes_scroll")
-                                .max_height(180.0)
-                                .auto_shrink([false, true])
-                                .show(ui, |ui| {
-                                    ui.spacing_mut().item_spacing.y = 4.0;
-                                    ui.add_space(3.0);
-                                    for (is_upload, path) in filtered {
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing.x = 6.0;
-                                            if is_upload {
-                                                ui.label(
-                                                    RichText::new(" + ADD ")
-                                                        .size(10.0)
-                                                        .color(Color32::BLACK)
-                                                        .background_color(Color32::from_rgb(90, 220, 110))
-                                                        .strong(),
-                                                );
-                                            } else {
-                                                ui.label(
-                                                    RichText::new(" - DEL ")
-                                                        .size(10.0)
-                                                        .color(Color32::WHITE)
-                                                        .background_color(Color32::from_rgb(220, 60, 60))
-                                                        .strong(),
-                                                );
-                                            }
-
-                                            // Path with dimmed directory and bold filename
-                                            if let Some((dir, filename)) = path.rsplit_once('/') {
-                                                ui.label(RichText::new(format!("{}/", dir)).weak().monospace().size(12.0));
-                                                ui.label(RichText::new(filename).monospace().strong().size(12.0));
-                                            } else {
-                                                ui.label(RichText::new(path.as_str()).monospace().strong().size(12.0));
-                                            }
-
-                                            // Category tag on the far right
-                                            ui.with_layout(
-                                                egui::Layout::right_to_left(egui::Align::Center),
-                                                |ui| {
-                                                    let ext = path
-                                                        .split('.')
-                                                        .last()
-                                                        .unwrap_or("")
-                                                        .to_lowercase();
-                                                    let (tag, color) = match ext.as_str() {
-                                                        "dll" => ("PLUGIN", Color32::from_rgb(80, 160, 240)),
-                                                        "cfg" | "json" | "yaml" | "yml" => (
-                                                            "CONFIG",
-                                                            Color32::from_rgb(230, 180, 70),
-                                                        ),
-                                                        "png" | "jpg" | "asset" => (
-                                                            "ASSET",
-                                                            Color32::from_rgb(160, 120, 230),
-                                                        ),
-                                                        _ => ("FILE", Color32::from_rgb(140, 140, 140)),
-                                                    };
-                                                    ui.label(
-                                                        RichText::new(tag)
-                                                            .size(9.0)
-                                                            .color(color)
-                                                            .monospace(),
-                                                    );
-                                                },
-                                            );
-                                        });
-                                    }
-                                    ui.add_space(3.0);
-                                });
-                        });
-
-                    if ui.rect_contains_pointer(frame_res.response.rect) {
-                        ui.ctx().input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
-                    }
-                }
-            }
-        });
-    }
-
-    // Modern Execution Summary Banner
-    fn ui_sync_execution_summary(&mut self, ui: &mut Ui) {
-        if self.sync.active_mode == Some(SyncMode::Preview) {
-            return;
-        }
-
-        if let Some(summary) = &self.sync.summary {
-            ui.add_space(10.0);
-            let (bg_color, stroke_color, title) = if summary.cancelled {
-                (
-                    Color32::from_rgb(34, 30, 20),
-                    Color32::from_rgb(200, 160, 40),
-                    self.language.sync_cancelled_title().to_string(),
-                )
-            } else if summary.failed_uploads > 0 || summary.failed_deletes > 0 {
-                (
-                    Color32::from_rgb(36, 22, 22),
-                    Color32::from_rgb(210, 60, 60),
-                    self.language.sync_failed_title().to_string(),
-                )
-            } else {
-                (
-                    Color32::from_rgb(20, 34, 24),
-                    Color32::from_rgb(50, 160, 80),
-                    self.language.sync_completed_title(summary.elapsed_secs),
-                )
-            };
-
-            egui::Frame::group(ui.style())
-                .rounding(egui::Rounding::same(6.0))
-                .fill(bg_color)
-                .stroke(egui::Stroke::new(1.0_f32, stroke_color))
-                .inner_margin(egui::Margin::same(10.0))
-                .show(ui, |ui| {
-                    ui.label(RichText::new(title).heading().strong());
-                    ui.separator();
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(format!("• Uploaded: {}", summary.uploaded));
-                        ui.label(format!("• Deleted: {}", summary.deleted));
-                        if summary.failed_uploads > 0 {
-                            ui.colored_label(
-                                Color32::from_rgb(255, 90, 90),
-                                format!("• Failed uploads: {}", summary.failed_uploads),
-                            );
-                        }
-                        if summary.failed_deletes > 0 {
-                            ui.colored_label(
-                                Color32::from_rgb(255, 90, 90),
-                                format!("• Failed deletes: {}", summary.failed_deletes),
-                            );
-                        }
-                        ui.label(format!("• Staged copies: {}", summary.staged_copied));
-                        ui.label(format!("• Staged prunes: {}", summary.staged_pruned));
-                        ui.label(format!("• Elapsed: {:.1}s", summary.elapsed_secs));
-                    });
-                });
-        }
-    }
-
-    // Modern Terminal Logs Console
-    fn ui_sync_logs_console(&mut self, ui: &mut Ui) {
-        ui.add_space(12.0);
-        ui.group(|ui| {
-            let total_logs = self.sync.logs.len();
-            let err_count = self
-                .sync
-                .logs
-                .iter()
-                .filter(|l| l.level == LogLevel::Error)
-                .count();
-            let warn_count = self
-                .sync
-                .logs
-                .iter()
-                .filter(|l| l.level == LogLevel::Warning)
-                .count();
-            let succ_count = self
-                .sync
-                .logs
-                .iter()
-                .filter(|l| l.level == LogLevel::Success)
-                .count();
-            let info_count = self
-                .sync
-                .logs
-                .iter()
-                .filter(|l| l.level == LogLevel::Info)
-                .count();
-
-            // Toolbar
-            ui.horizontal(|ui| {
-                ui.heading(self.language.heading_logs());
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button(self.language.btn_clear_logs()).clicked() {
-                        self.sync.logs.clear();
-                    }
-
-                    // Copy logs button
-                    if ui.small_button(self.language.btn_copy_logs()).clicked() {
-                        let text: String = self
-                            .sync
-                            .logs
-                            .iter()
-                            .map(|l| {
-                                let tag = match l.level {
-                                    LogLevel::Info => "[INFO]",
-                                    LogLevel::Success => "[OK]",
-                                    LogLevel::Warning => "[WARN]",
-                                    LogLevel::Error => "[ERROR]",
-                                };
-                                format!("{} {}\n", tag, l.message)
-                            })
-                            .collect();
-                        ui.ctx().copy_text(text);
-                        self.sync.copied_feedback = Some(Instant::now());
-                    }
-
-                    // Copy feedback text
-                    if let Some(t) = self.sync.copied_feedback {
-                        if t.elapsed().as_secs_f32() < 2.0 {
-                            ui.colored_label(
-                                Color32::from_rgb(90, 220, 110),
-                                self.language.msg_logs_copied(),
-                            );
-                        } else {
-                            self.sync.copied_feedback = None;
-                        }
-                    }
-
-                    ui.checkbox(&mut self.sync.log_autoscroll, self.language.chk_autoscroll());
-                });
-            });
-
-            // Filter chips & search row (Chips on Left, Search on Right)
-            ui.horizontal(|ui| {
-                ui.horizontal(|ui| {
-                    let is_all = self.sync.log_filter.is_none();
-                    if ui
-                        .selectable_label(is_all, self.language.log_filter_all(total_logs))
-                        .clicked()
-                    {
-                        self.sync.log_filter = None;
-                    }
-
-                    if err_count > 0 || self.sync.log_filter == Some(LogLevel::Error) {
-                        let is_err = self.sync.log_filter == Some(LogLevel::Error);
-                        let err_chip = RichText::new(self.language.log_filter_errors(err_count))
-                            .color(if err_count > 0 {
-                                Color32::from_rgb(255, 90, 90)
-                            } else {
-                                Color32::GRAY
-                            });
-                        if ui.selectable_label(is_err, err_chip).clicked() {
-                            self.sync.log_filter = if is_err { None } else { Some(LogLevel::Error) };
-                        }
-                    }
-
-                    if warn_count > 0 || self.sync.log_filter == Some(LogLevel::Warning) {
-                        let is_warn = self.sync.log_filter == Some(LogLevel::Warning);
-                        let warn_chip = RichText::new(self.language.log_filter_warnings(warn_count))
-                            .color(if warn_count > 0 {
-                                Color32::from_rgb(240, 180, 50)
-                            } else {
-                                Color32::GRAY
-                            });
-                        if ui.selectable_label(is_warn, warn_chip).clicked() {
-                            self.sync.log_filter = if is_warn {
-                                None
-                            } else {
-                                Some(LogLevel::Warning)
-                            };
-                        }
-                    }
-
-                    let is_succ = self.sync.log_filter == Some(LogLevel::Success);
-                    if ui
-                        .selectable_label(is_succ, self.language.log_filter_success(succ_count))
-                        .clicked()
-                    {
-                        self.sync.log_filter = if is_succ {
-                            None
-                        } else {
-                            Some(LogLevel::Success)
-                        };
-                    }
-
-                    let is_info = self.sync.log_filter == Some(LogLevel::Info);
-                    if ui
-                        .selectable_label(is_info, self.language.log_filter_info(info_count))
-                        .clicked()
-                    {
-                        self.sync.log_filter = if is_info { None } else { Some(LogLevel::Info) };
-                    }
-                });
-
-                // Search pinned to the right edge
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label("🔍");
-                    if !self.sync.log_search.is_empty() && ui.small_button("✕").clicked() {
-                        self.sync.log_search.clear();
-                    }
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.sync.log_search)
-                            .hint_text(self.language.hint_search_logs())
-                            .desired_width(180.0),
-                    );
-                });
-            });
-
-            ui.separator();
-
-            if self.sync.logs.is_empty() {
-                ui.label(RichText::new(self.language.no_logs_yet()).weak());
-            } else {
-                let search = self.sync.log_search.to_lowercase();
-                let active_level = self.sync.log_filter;
-
-                let filtered_logs: Vec<_> = self
-                    .sync
-                    .logs
-                    .iter()
-                    .filter(|l| {
-                        if let Some(lvl) = active_level {
-                            if l.level != lvl {
-                                return false;
-                            }
-                        }
-                        if !search.is_empty() && !l.message.to_lowercase().contains(&search) {
-                            return false;
-                        }
-                        true
-                    })
-                    .collect();
-
-                if filtered_logs.is_empty() {
-                    ui.label(RichText::new(self.language.no_logs_matching()).weak());
-                } else {
-                    let frame_res = egui::Frame::none()
-                        .fill(Color32::from_rgb(14, 16, 22))
-                        .rounding(egui::Rounding::same(6.0))
-                        .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(30, 34, 44)))
-                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                        .show(ui, |ui| {
-                            let mut scroll = egui::ScrollArea::vertical()
-                                .id_salt("sync_activity_logs_scroll")
-                                .max_height(220.0)
-                                .auto_shrink([false, false]);
-                            if self.sync.log_autoscroll {
-                                scroll = scroll.stick_to_bottom(true);
-                            }
-                            scroll.show(ui, |ui| {
-                                ui.spacing_mut().item_spacing.y = 3.0;
-                                ui.add_space(3.0);
-                                for log in filtered_logs {
-                                    ui.horizontal(|ui| {
-                                        let (tag, tag_bg, tag_fg) = match log.level {
-                                            LogLevel::Info => (
-                                                "INFO",
-                                                Color32::from_rgb(40, 50, 70),
-                                                Color32::from_rgb(170, 190, 220),
-                                            ),
-                                            LogLevel::Success => (
-                                                " OK ",
-                                                Color32::from_rgb(20, 60, 30),
-                                                Color32::from_rgb(100, 230, 130),
-                                            ),
-                                            LogLevel::Warning => (
-                                                "WARN",
-                                                Color32::from_rgb(70, 50, 15),
-                                                Color32::from_rgb(250, 200, 80),
-                                            ),
-                                            LogLevel::Error => (
-                                                "ERR!",
-                                                Color32::from_rgb(75, 20, 20),
-                                                Color32::from_rgb(255, 110, 110),
-                                            ),
-                                        };
-
-                                        ui.label(
-                                            RichText::new(tag)
-                                                .size(10.0)
-                                                .color(tag_fg)
-                                                .background_color(tag_bg)
-                                                .monospace()
-                                                .strong(),
-                                        );
-
-                                        let msg_color = match log.level {
-                                            LogLevel::Info => Color32::from_rgb(195, 200, 210),
-                                            LogLevel::Success => Color32::from_rgb(130, 230, 150),
-                                            LogLevel::Warning => Color32::from_rgb(240, 200, 100),
-                                            LogLevel::Error => Color32::from_rgb(255, 120, 120),
-                                        };
-
-                                        ui.label(
-                                            RichText::new(&log.message)
-                                                .size(12.0)
-                                                .color(msg_color)
-                                                .monospace(),
-                                        );
-                                    });
-                                }
-                                ui.add_space(3.0);
-                            });
-                        });
-
-                    if ui.rect_contains_pointer(frame_res.response.rect) {
-                        ui.ctx().input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
-                    }
-                }
-            }
-        });
-    }
-
-    fn ui_help(&mut self, ui: &mut Ui) {
-        egui::ScrollArea::vertical()
-            .id_salt("help_tab_scroll")
-            .show(ui, |ui| {
-            ui.add_space(8.0);
-            ui.heading(self.language.help_title());
-            ui.separator();
-
-            for (section_title, points) in self.language.help_content() {
-                ui.add_space(8.0);
-                ui.label(RichText::new(*section_title).strong());
-                for point in *points {
-                    ui.label(*point);
-                }
-            }
-        });
-    }
-}
+mod ui;
