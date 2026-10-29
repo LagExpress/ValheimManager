@@ -4,6 +4,21 @@ Release notes describe changes introduced in each version. Use Added, Changed,
 Fixed, Removed, and Security sections where applicable. Keep entries focused on
 user-visible behavior; omit build reports, test counts, and development history.
 
+## [0.1.7] - 2026-10-29
+
+### Fixed
+
+- Fixed AppImage startup on NixOS by launching through a real ELF loader instead of the system's compatibility stub.
+- Included the C runtime and required Wayland, X11, OpenGL, Vulkan-loader, and compression libraries in AppImages.
+- Removed build-machine library search paths from packaged libraries.
+- Kept bundled library paths out of the environment inherited by host programs such as the output-folder opener.
+
+### Changed
+
+- CI and local builds now use the same AppImage packager, launcher, and checksum-verified runtime.
+- Packaging checks library resolution and CI opens the packaged application in a test display before uploading it.
+- Declared packaging, analysis, and headless test tools in the devenv environment.
+
 ## [0.1.6] - 2026-10-29
 
 ### Changed

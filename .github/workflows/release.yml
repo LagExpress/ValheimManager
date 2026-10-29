@@ -83,42 +83,13 @@ jobs:
       - name: Install Linux GUI Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev pkg-config zlib1g-dev perl file libfuse2
-
-      - name: Build Release Binary
-        run: cargo build --locked --release
+          sudo apt-get install -y build-essential libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libx11-xcb1 libxrender1 libxext6 libxfixes3 libxcb1 libegl1 libgl1 libvulkan1 libwayland-egl1 pkg-config zlib1g-dev perl file libfuse2 patchelf squashfs-tools xvfb x11-utils libgl1-mesa-dri mesa-vulkan-drivers
 
       - name: Package AppImage
-        run: |
-          mkdir -p build/AppDir/usr/bin
-          mkdir -p build/AppDir/usr/share/applications
-          mkdir -p build/AppDir/usr/share/icons/hicolor/256x256/apps
-          mkdir -p dist
+        run: bash scripts/build-appimage.sh
 
-          cp target/release/valheim-modpack-studio build/AppDir/usr/bin/
-          cp target/release/valheim-modpack-studio build/AppDir/
-          cp valheim-modpack-studio.desktop build/AppDir/usr/share/applications/
-          cp valheim-modpack-studio.desktop build/AppDir/
-          cp src/assets/icon.png build/AppDir/usr/share/icons/hicolor/256x256/apps/valheim-modpack-studio.png
-          cp src/assets/icon.png build/AppDir/valheim-modpack-studio.png
-          cp src/assets/icon.png build/AppDir/.DirIcon
-
-          cat << 'EOF' > build/AppDir/AppRun
-          #!/bin/sh
-          HERE="$(dirname "$(readlink -f "${0}")")"
-          export PATH="${HERE}/usr/bin:${PATH}"
-          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
-          exec "${HERE}/usr/bin/valheim-modpack-studio" "$@"
-          EOF
-          chmod +x build/AppDir/AppRun
-
-          curl -fsSL --retry 3 -o appimagetool-x86_64.AppImage https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
-          echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool-x86_64.AppImage" | sha256sum --check --strict
-          curl -fsSL --retry 3 -o runtime-x86_64 https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
-          echo "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  runtime-x86_64" | sha256sum --check --strict
-          chmod +x appimagetool-x86_64.AppImage
-          ./appimagetool-x86_64.AppImage --appimage-extract
-          ARCH=x86_64 ./squashfs-root/AppRun --runtime-file "$PWD/runtime-x86_64" build/AppDir "dist/ValheimManager-${VERSION}.AppImage"
+      - name: Smoke-test the packaged application
+        run: bash scripts/smoke-appimage.sh "dist/ValheimManager-${VERSION}.AppImage"
 
       - name: Upload Linux AppImage Artifact
         uses: actions/upload-artifact@v7.0.2

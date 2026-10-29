@@ -1,0 +1,77 @@
+#!/bin/sh
+set -eu
+
+HERE=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+BINARY="$HERE/usr/bin/valheim-modpack-studio"
+BUNDLED_GLIBC="$HERE/usr/lib/glibc"
+LOADER="$BUNDLED_GLIBC/ld-linux-x86-64.so.2"
+GLIBC_DIR="$BUNDLED_GLIBC"
+
+# Use a newer host glibc for compatibility with its GPU drivers. The shell's
+# mappings identify a real loader, including on NixOS with its /lib64 stub.
+HOST_LOADER=''
+while read -r _address _permissions _offset _device _inode mapped_path _rest; do
+    case "$mapped_path" in
+        */ld-linux-x86-64.so.2|*/ld-[0-9]*.so)
+            HOST_LOADER=$mapped_path
+            break
+            ;;
+    esac
+done < "/proc/$$/maps"
+
+glibc_version() {
+    "$1" --version | sed -n 's/.*stable release version \([0-9]*\)\.\([0-9]*\).*/\1 \2/p'
+}
+
+if [ -n "$HOST_LOADER" ] && [ -x "$HOST_LOADER" ]; then
+    bundled_version=$(glibc_version "$LOADER")
+    host_version=$(glibc_version "$HOST_LOADER")
+    if [ -n "$bundled_version" ] && [ -n "$host_version" ]; then
+        bundled_major=${bundled_version%% *}
+        bundled_minor=${bundled_version#* }
+        host_major=${host_version%% *}
+        host_minor=${host_version#* }
+        if [ "$host_major" -gt "$bundled_major" ] || {
+            [ "$host_major" -eq "$bundled_major" ] && [ "$host_minor" -ge "$bundled_minor" ];
+        }; then
+            LOADER=$HOST_LOADER
+            GLIBC_DIR=${HOST_LOADER%/*}
+        fi
+    fi
+fi
+
+LIBRARY_PATH="$GLIBC_DIR:$BUNDLED_GLIBC:$HERE/usr/lib"
+if [ -d /run/opengl-driver/lib ]; then
+    LIBRARY_PATH="/run/opengl-driver/lib:$LIBRARY_PATH"
+fi
+LIBRARY_PATH="$LIBRARY_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+export XDG_DATA_DIRS="$HERE/usr/share:/run/opengl-driver/share:/run/current-system/sw/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+if [ -z "${__EGL_VENDOR_LIBRARY_DIRS:-}" ]; then
+    export __EGL_VENDOR_LIBRARY_DIRS="/run/opengl-driver/share/glvnd/egl_vendor.d:/etc/glvnd/egl_vendor.d:/usr/share/glvnd/egl_vendor.d"
+fi
+if [ -z "${VK_DRIVER_FILES:-}" ] && [ -z "${VK_ICD_FILENAMES:-}" ]; then
+    ICD_LIST=''
+    for icd in /run/opengl-driver/share/vulkan/icd.d/*.json; do
+        if [ -f "$icd" ]; then
+            ICD_LIST="${ICD_LIST}${ICD_LIST:+:}${icd}"
+        fi
+    done
+    if [ -n "$ICD_LIST" ]; then
+        export VK_DRIVER_FILES="$ICD_LIST"
+    fi
+fi
+
+# Resolve direct imports and dlopen-only libraries without opening a window.
+if [ "${VALHEIM_APPIMAGE_CHECK:-0}" = 1 ]; then
+    printf 'ELF loader: %s\n' "$LOADER"
+    "$LOADER" --library-path "$LIBRARY_PATH" --list "$BINARY"
+    for library in "$HERE"/usr/lib/*.so*; do
+        "$LOADER" --library-path "$LIBRARY_PATH" --list "$library" > /dev/null
+    done
+    exit 0
+fi
+
+# Do not export bundled LD_LIBRARY_PATH: host children such as xdg-open must
+# retain their own runtime. The loader option also covers this process's dlopen.
+exec "$LOADER" --library-path "$LIBRARY_PATH" "$BINARY" "$@"

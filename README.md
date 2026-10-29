@@ -97,20 +97,40 @@ cargo run --release
 
 ### 1. Linux AppImage
 
-To build a standalone, portable `.AppImage` that runs on any Linux distribution:
+To build an AppImage for x86-64 Linux desktops, including NixOS:
 
 ```bash
 # Build the AppImage
 devenv shell -- appimage
 
 # Output is generated at:
-dist/ValheimManager-0.1.6.AppImage
+dist/ValheimManager-0.1.7.AppImage
 ```
 
 Run the AppImage:
 ```bash
-./dist/ValheimManager-0.1.6.AppImage
+./dist/ValheimManager-0.1.7.AppImage
 ```
+
+CI and local builds use the same packager. It bundles the ELF loader, glibc, and
+the Wayland/X11/OpenGL/Vulkan client libraries with their dependencies. The
+launcher uses a newer host glibc when available to support the host's graphics
+drivers, and does not require `nix-ld` or `appimage-run` on NixOS. The host still
+provides its kernel, desktop session, and compatible graphics drivers; the
+AppImage does not bundle GPU drivers or support other CPU architectures.
+
+All project build and validation tools are declared in `devenv.nix`. Check a
+packaged runtime or open it on an isolated headless test display with:
+
+```bash
+devenv shell -- bash scripts/check-appimage.sh dist/ValheimManager-0.1.7.AppImage
+devenv shell -- bash scripts/smoke-appimage.sh dist/ValheimManager-0.1.7.AppImage
+```
+
+The smoke test uses temporary settings and home directories and never connects
+to a hosting server. Logs are kept under `target/appimage-smoke.*`. It checks
+startup, not full visual correctness. Local and CI sizes/hashes can differ due
+to their compiler and library builds; verify each download with its own checksum.
 
 ---
 
@@ -126,22 +146,22 @@ scripts\build-windows.bat
 
 The output binary will be created at:
 ```text
-dist\ValheimManager-0.1.6.exe
+dist\ValheimManager-0.1.7.exe
 ```
 
 #### Option B: Automated GitHub Actions CI/CD
 This repository includes a ready-to-use GitHub Actions workflow at [`.github/workflows/release.yml`](.github/workflows/release.yml):
 - Pushes to `main`, pull requests to `main`, and version tags run quality checks and build both:
-  - `ValheimManager-0.1.6.AppImage` (Linux)
-  - `ValheimManager-0.1.6.exe` (Windows)
-- Builds are uploaded to GitHub Actions artifacts. A tag matching the Cargo version (for example `v0.1.6`) also publishes a GitHub release containing the EXE, AppImage, and SHA-256 checksums. Source is available through GitHub's built-in Source code (zip) and Source code (tar.gz) downloads for the tag; CI does not upload duplicate source archives.
+  - `ValheimManager-0.1.7.AppImage` (Linux)
+  - `ValheimManager-0.1.7.exe` (Windows)
+- Builds are uploaded to GitHub Actions artifacts. A tag matching the Cargo version (for example `v0.1.7`) also publishes a GitHub release containing the EXE, AppImage, and SHA-256 checksums. Source is available through GitHub's built-in Source code (zip) and Source code (tar.gz) downloads for the tag; CI does not upload duplicate source archives.
 - Release descriptions come from [CHANGELOG.md](CHANGELOG.md). Before tagging a version, add its entry under `## [<version>] - YYYY-MM-DD`, using Added, Changed, Fixed, Removed, or Security sections as needed. CI rejects a version without a nonempty changelog entry and publishes that entry as the release description.
 
 ---
 
 ## 🛠️ Project Architecture
 
-The shared appearance tokens, reusable UI components, and native effect adapter keep screen layouts independent of platform-specific transparency. [Dependency review](docs/dependency-audit-2026-10-29.md), [UI validation](docs/ui-validation-2026-10-29.md), and [release 0.1.6](docs/release-0.1.6.md) document the checks and platform limits.
+The shared appearance tokens, reusable UI components, and native effect adapter keep screen layouts independent of platform-specific transparency. [Dependency review](docs/dependency-audit-2026-10-29.md), [UI validation](docs/ui-validation-2026-10-29.md), and [release 0.1.7](docs/release-0.1.7.md) document the checks and platform limits.
 
 ```text
 ├── Cargo.toml                      # Rust dependencies & metadata

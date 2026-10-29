@@ -21,8 +21,14 @@ let
     xorg.libXcursor
     xorg.libXi
     xorg.libXrandr
+    xorg.libXrender
+    xorg.libXext
+    xorg.libXfixes
+    xorg.libXinerama
+    xorg.libxcb
     vulkan-loader
     fontconfig
+    zlib
   ];
 in
 {
@@ -34,9 +40,28 @@ in
     targets = [ "x86_64-pc-windows-gnu" ];
   };
   languages.javascript.enable = true;
+  languages.python.enable = true;
 
   # Project dependencies and tools
   packages = with pkgs; [
+    bash
+    coreutils
+    findutils
+    gawk
+    gnugrep
+    gnused
+    git
+    gh
+    ripgrep
+    binutils
+    patchelf
+    glibc.bin
+    shellcheck
+    actionlint
+    cargo-audit
+    util-linux
+    xorg.xorgserver
+    xorg.xwininfo
     pkg-config
     zip
     unzip
