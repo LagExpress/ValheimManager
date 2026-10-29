@@ -32,6 +32,7 @@ fn fixture() -> ModpackApp {
     app.pack_version = "1.0.0".into();
     app.custom_icon_path = None;
     app.sync.config = SyncConfig::default();
+    app.sync.config.manage_bepinex_launcher = true;
     app.sync.config.host = "valheim.example.net".into();
     app.sync.config.username = "viking".into();
     app.sync.config.staging_dir = "/home/viking/Desktop/Valheim/Northern_Realms/staging".into();
@@ -446,6 +447,18 @@ fn cancelling_the_version_dialog_with_escape_does_not_save_or_increment() {
 }
 
 #[test]
+fn disabled_launcher_action_is_blocked_before_connection_or_settings_writes() {
+    let mut app = fixture();
+    app.sync.config.manage_bepinex_launcher = false;
+    app.sync.config.host.clear();
+    app.sync.config.staging_dir.clear();
+    app.start_sync(SyncMode::CheckWrapper, &egui::Context::default());
+    assert!(!app.sync.running);
+    assert!(app.sync.receiver.is_none());
+    assert!(app.status_message.as_ref().unwrap().0.contains("disabled"));
+}
+
+#[test]
 fn wrapped_log_rows_fit_their_width_and_reuse_layouts() {
     let mut app = fixture();
     app.active_tab = ActiveTab::ServerSync;
@@ -730,7 +743,7 @@ fn export_visual_previews() {
 #[test]
 #[ignore = "Exports saved configuration, version prompt, and wrapping previews"]
 fn export_configuration_previews() {
-    let root = PathBuf::from("target/ui-previews/0.1.3");
+    let root = PathBuf::from("target/ui-previews").join(env!("CARGO_PKG_VERSION"));
     std::fs::create_dir_all(&root).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let mut capture = Capture::new();
@@ -788,6 +801,49 @@ fn export_configuration_previews() {
                 (640, 480),
                 &root.join(format!("{theme:?}-{}-wrapped-logs.png", language.code())),
             );
+            for enabled in [false, true] {
+                app.sync.config.manage_bepinex_launcher = enabled;
+                app.sync.preview.as_mut().unwrap().wrapper.status = if enabled {
+                    WrapperStatus::Intact
+                } else {
+                    WrapperStatus::Skipped
+                };
+                let mut output = egui::FullOutput::default();
+                for _ in 0..6 {
+                    output.append(ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(640.0, 720.0),
+                            )),
+                            time: Some(ctx.input(|i| i.time) + 0.1),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            let palette = Palette::new(theme, false);
+                            components::backdrop(
+                                ui,
+                                palette.background,
+                                palette.accent,
+                                theme.glass(),
+                            );
+                            card(ui, app.language.heading_connection(), |ui| {
+                                app.launcher_compatibility(ui)
+                            });
+                            app.sync_preview(ui);
+                        },
+                    ));
+                }
+                capture.save(
+                    &ctx,
+                    output,
+                    (640, 720),
+                    &root.join(format!(
+                        "{theme:?}-{}-launcher-{enabled}.png",
+                        language.code()
+                    )),
+                );
+            }
         }
     }
 }

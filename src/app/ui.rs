@@ -1320,10 +1320,64 @@ impl ModpackApp {
                     .small()
                     .weak(),
             );
+            self.launcher_compatibility(ui);
             if ui.button(self.language.btn_save_settings()).clicked() {
                 self.persist_sync();
             }
         });
+    }
+
+    fn launcher_compatibility(&mut self, ui: &mut Ui) {
+        let language = self.language;
+        ui.separator();
+        ui.label(
+            RichText::new(tr(
+                language,
+                "Hosting compatibility",
+                "Compatibilidad del alojamiento",
+            ))
+            .small()
+            .strong(),
+        );
+        let previous = self.sync.config.manage_bepinex_launcher;
+        let changed = ui
+            .add_enabled(
+                !self.sync.running,
+                egui::Checkbox::new(
+                    &mut self.sync.config.manage_bepinex_launcher,
+                    tr(
+                        language,
+                        "Enable custom BepInEx launcher checks and repair",
+                        "Activar la revisión y reparación del iniciador BepInEx personalizado",
+                    ),
+                ),
+            )
+            .changed();
+        ui.label(RichText::new(tr(language,
+            "Leave off when your provider supplies BepInEx or restricts executable changes. Enable only when your host lets you replace valheim_server.x86_64 and manage its data symlink. Config and plugin sync remains available in either mode.",
+            "Déjalo desactivado si el proveedor incluye BepInEx o restringe los cambios del ejecutable. Actívalo solo si permite reemplazar valheim_server.x86_64 y gestionar su enlace de datos. La sincronización de config y plugins sigue disponible en ambos modos.",
+        )).small().weak());
+        if changed {
+            match self.sync.config.save() {
+                Ok(()) => {
+                    self.sync.preview = None;
+                    self.sync.preview_revision = self.sync.preview_revision.wrapping_add(1);
+                    self.status_message = Some((
+                        tr(
+                            language,
+                            "Hosting compatibility preference saved.",
+                            "Preferencia de compatibilidad guardada.",
+                        )
+                        .into(),
+                        false,
+                    ));
+                }
+                Err(error) => {
+                    self.sync.config.manage_bepinex_launcher = previous;
+                    self.sync_error(error);
+                }
+            }
+        }
     }
 
     fn persist_sync(&mut self) {
@@ -1365,7 +1419,12 @@ impl ModpackApp {
                         (SyncMode::RefreshStaging, self.language.btn_action_refresh()),
                         (SyncMode::TestConnection, self.language.btn_action_test()),
                     ] {
-                        if ui.button(label).clicked() {
+                        let enabled = mode != SyncMode::CheckWrapper || self.sync.config.manage_bepinex_launcher;
+                        let response = ui.add_enabled(enabled, egui::Button::new(label));
+                        let response = if enabled { response } else { response.on_disabled_hover_text(tr(language,
+                                "Enable custom BepInEx launcher checks in Hosting compatibility to use this action.",
+                                "Activa la revisión del iniciador BepInEx en Compatibilidad del alojamiento para usar esta acción.")) };
+                        if response.clicked() {
                             self.start_sync(mode, ui.ctx());
                         }
                     }
@@ -1462,23 +1521,44 @@ impl ModpackApp {
                     p.info,
                 );
             });
-            let (status, color) = match preview.wrapper.status {
-                WrapperStatus::Intact => (self.language.wrapper_intact(), p.success),
-                WrapperStatus::ElfNeedsRename => (self.language.wrapper_rename_needed(), p.warning),
-                _ => (self.language.wrapper_missing(), p.warning),
-            };
-            ui.colored_label(color, status);
-            ui.label(
-                RichText::new(if preview.wrapper.symlink_present {
-                    self.language.symlink_ok()
-                } else {
-                    self.language.symlink_missing()
-                })
-                .small()
-                .weak(),
-            );
-            for warning in &preview.wrapper.warnings {
-                ui.colored_label(p.warning, warning);
+            if preview.wrapper.status == WrapperStatus::Skipped {
+                ui.colored_label(
+                    p.muted,
+                    tr(
+                        language,
+                        "Custom launcher checks disabled · provider-managed BepInEx",
+                        "Revisión del iniciador desactivada · BepInEx gestionado por el proveedor",
+                    ),
+                );
+            } else {
+                let (status, color) = match preview.wrapper.status {
+                    WrapperStatus::Intact => (self.language.wrapper_intact(), p.success),
+                    WrapperStatus::ElfNeedsRename => {
+                        (self.language.wrapper_rename_needed(), p.warning)
+                    }
+                    WrapperStatus::Missing => (self.language.wrapper_missing(), p.warning),
+                    _ => (
+                        tr(
+                            language,
+                            "Wrapper status unknown",
+                            "Estado del iniciador desconocido",
+                        ),
+                        p.warning,
+                    ),
+                };
+                ui.colored_label(color, status);
+                ui.label(
+                    RichText::new(if preview.wrapper.symlink_present {
+                        self.language.symlink_ok()
+                    } else {
+                        self.language.symlink_missing()
+                    })
+                    .small()
+                    .weak(),
+                );
+                for warning in &preview.wrapper.warnings {
+                    ui.colored_label(p.warning, warning);
+                }
             }
             ui.horizontal_wrapped(|ui| {
                 for (tab, label) in [

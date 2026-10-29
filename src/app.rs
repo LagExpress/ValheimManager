@@ -612,6 +612,13 @@ impl ModpackApp {
         if self.sync.running {
             return;
         }
+        if mode == SyncMode::CheckWrapper && !self.sync.config.manage_bepinex_launcher {
+            self.sync_error(match self.language {
+                Language::English => "Custom BepInEx launcher checks and repair are disabled. Enable the hosting compatibility setting first.",
+                Language::Spanish => "La revisión y reparación del iniciador BepInEx están desactivadas. Activa primero la opción de compatibilidad del alojamiento.",
+            });
+            return;
+        }
 
         let needs_connection = mode != SyncMode::RefreshStaging;
         if needs_connection {

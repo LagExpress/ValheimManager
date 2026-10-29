@@ -420,8 +420,8 @@ impl Language {
 
     pub fn placeholder_no_preview(&self) -> &'static str {
         match self {
-            Language::English => "Click \"Preview Changes\"on the left to inspect pending uploads, deletions, and server wrapper status.",
-            Language::Spanish => "Haz clic en \"Vista Previa de Cambios\"a la izquierda para inspeccionar subidas, eliminaciones y el estado del wrapper.",
+            Language::English => "Click \"Preview Changes\" to inspect pending uploads, deletions, and optional custom launcher status.",
+            Language::Spanish => "Haz clic en \"Vista Previa de Cambios\" para inspeccionar subidas, eliminaciones y el estado opcional del iniciador personalizado.",
         }
     }
 
@@ -1015,7 +1015,8 @@ impl Language {
                         "6. 'Sync Changes' uploads modified files and removes remote files that are no longer in the profile.",
                         "• 'Refresh Staging' mirrors BepInEx/config and BepInEx/plugins into the staging folder.",
                         "• Ignore patterns in .sync_ignore prevent server-side files (like admin lists or server-only mods) from being deleted.",
-                        "• 'Check & Fix Wrapper' restores the modded server launch script after a Valheim game update.",
+                        "• Leave custom BepInEx launcher checks off for provider-managed servers. Enable them under Hosting compatibility only if your host allows executable replacement.",
+                        "• When launcher checks are enabled, 'Check & Fix Wrapper' restores the modded server launch script after a Valheim game update.",
                     ],
                 ),
                 (
@@ -1054,7 +1055,8 @@ impl Language {
                         "6. 'Sincronizar Cambios' sube los archivos modificados y elimina los archivos del servidor que ya no existan en el perfil.",
                         "• 'Actualizar Staging' duplica BepInEx/config y BepInEx/plugins en la carpeta local de preparación.",
                         "• Los patrones en .sync_ignore protegen archivos del servidor (como listas de administradores o mods exclusivos del server) para que no se borren.",
-                        "• 'Verificar y Reparar Wrapper' restaura el script de inicio modificado tras una actualización oficial de Valheim.",
+                        "• Deja desactivada la revisión del iniciador BepInEx en servidores gestionados por el proveedor. Actívala en Compatibilidad del alojamiento solo si permite reemplazar el ejecutable.",
+                        "• Con la revisión activada, 'Verificar y Reparar Wrapper' restaura el script de inicio modificado tras una actualización oficial de Valheim.",
                     ],
                 ),
                 (

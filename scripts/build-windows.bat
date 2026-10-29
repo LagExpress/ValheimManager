@@ -15,9 +15,9 @@ if %ERRORLEVEL% NEQ 0 (
 
 if not exist "dist" mkdir dist
 
-copy /Y "target\release\valheim-modpack-studio.exe" "dist\ValheimModpackStudio-0.1.4-x86_64.exe"
+copy /Y "target\release\valheim-modpack-studio.exe" "dist\ValheimModpackStudio-0.1.5-x86_64.exe"
 
 echo.
-echo [SUCCESS] Binary created at dist\ValheimModpackStudio-0.1.4-x86_64.exe
+echo [SUCCESS] Binary created at dist\ValheimModpackStudio-0.1.5-x86_64.exe
 echo ========================================================
 pause

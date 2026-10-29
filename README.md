@@ -35,7 +35,7 @@ Runs natively on **Linux** (as a standalone binary and **AppImage**) and **Windo
   - Generates/embeds a compliant 256×256 `icon.png` (or accepts a custom image).
   - Packs into a clean `.zip` in `dist/<Name>-<Version>.zip`.
 - **🚀 Build & Open**: Build the archive and open its containing output folder directly from the GUI.
-- **🔄 Server Sync**: Deploy `BepInEx/config` and `BepInEx/plugins` to a dedicated server over SFTP, with hash-based uploads, safe deletion of removed files, staging refresh, ignore patterns, and automatic repair of the modded server wrapper after game updates.
+- **🔄 Server Sync**: Deploy `BepInEx/config` and `BepInEx/plugins` to a dedicated server over SFTP, with hash-based uploads, safe deletion of removed files, staging refresh, ignore patterns, and optional custom launcher repair for compatible hosts.
 
 ---
 
@@ -54,6 +54,8 @@ Presets are stored in `modpacks.json` beside `appearance.json` and `sync.json`; 
 
 The **Server Sync** tab keeps a dedicated Valheim server's BepInEx folder aligned with the selected profile.
 
+**Hosting compatibility:** custom BepInEx launcher checks and repair are **off by default**, including when older saved settings have no value for this option. Leave this off when the provider already supplies BepInEx or does not allow executable replacement. To use the original custom-host behavior, enable **Enable custom BepInEx launcher checks and repair** under **Server Connection → Hosting compatibility**. The checkbox saves immediately. Enabled checks inspect the server launcher during preview and repair it before uploads; they may rename/replace `valheim_server.x86_64` and create its data symlink. When disabled, these operations are skipped and **Check & Fix Wrapper** is disabled. Config/plugin sync, SSH host-key verification, and `/BepInEx` folder access checks remain available.
+
 1. Select the source profile on the **Profile & Info** tab.
 2. Enter the SFTP host, port, username, and password.
 3. Choose a staging folder. The default is `~/Desktop/valheim` (`%USERPROFILE%\Desktop\valheim` on Windows).
@@ -66,7 +68,7 @@ Additional actions:
 - **Refresh Staging** mirrors the profile's `BepInEx/config` and `BepInEx/plugins` into the staging folder. Obsolete non-ignored files are pruned.
 - **Force Upload All** re-uploads every local file.
 - **Upload Only** uploads changes without deleting anything remotely.
-- **Check & Fix Wrapper** restores `/valheim_server.x86_64`, backs up a game-update ELF to `/valheim_server.x86_64.bin`, and ensures the data symlink exists.
+- **Check & Fix Wrapper**, available when custom launcher management is enabled, restores `/valheim_server.x86_64`, backs up a game-update ELF to `/valheim_server.x86_64.bin`, and ensures the data symlink exists.
 - **Test Connection** verifies the SFTP credentials and remote BepInEx folder.
 
 Sync state is stored in `<staging>/.sync_state.json`. Ignore patterns are read from `<staging>/.sync_ignore`; the built-in defaults protect runtime state files and large blueprint folders. The server password is stored in plain text in the application config folder (`sync.json`), with owner-only permissions on Unix.
@@ -102,12 +104,12 @@ To build a standalone, portable `.AppImage` that runs on any Linux distribution:
 devenv shell -- appimage
 
 # Output is generated at:
-dist/ValheimModpackStudio-0.1.4-x86_64.AppImage
+dist/ValheimModpackStudio-0.1.5-x86_64.AppImage
 ```
 
 Run the AppImage:
 ```bash
-./dist/ValheimModpackStudio-0.1.4-x86_64.AppImage
+./dist/ValheimModpackStudio-0.1.5-x86_64.AppImage
 ```
 
 ---
@@ -124,21 +126,21 @@ scripts\build-windows.bat
 
 The output binary will be created at:
 ```text
-dist\ValheimModpackStudio-0.1.4-x86_64.exe
+dist\ValheimModpackStudio-0.1.5-x86_64.exe
 ```
 
 #### Option B: Automated GitHub Actions CI/CD
 This repository includes a ready-to-use GitHub Actions workflow at [`.github/workflows/release.yml`](.github/workflows/release.yml):
 - Pushes to `main`, pull requests to `main`, and version tags run quality checks and build both:
-  - `ValheimModpackStudio-0.1.4-x86_64.AppImage` (Linux)
-  - `ValheimModpackStudio-0.1.4-x86_64.exe` (Windows)
-- Builds are uploaded to GitHub Actions artifacts. A tag matching the Cargo version (for example `v0.1.4`) also publishes a GitHub release containing the EXE, AppImage, tagged source as ZIP and tar.gz, and SHA-256 checksums. GitHub's standard source-code download links remain available on the tag as well.
+  - `ValheimModpackStudio-0.1.5-x86_64.AppImage` (Linux)
+  - `ValheimModpackStudio-0.1.5-x86_64.exe` (Windows)
+- Builds are uploaded to GitHub Actions artifacts. A tag matching the Cargo version (for example `v0.1.5`) also publishes a GitHub release containing the EXE, AppImage, tagged source as ZIP and tar.gz, and SHA-256 checksums. GitHub's standard source-code download links remain available on the tag as well.
 
 ---
 
 ## 🛠️ Project Architecture
 
-The shared appearance tokens, reusable UI components, and native effect adapter keep screen layouts independent of platform-specific transparency. [Dependency review](docs/dependency-audit-2026-10-29.md), [UI validation](docs/ui-validation-2026-10-29.md), and [release 0.1.4](docs/release-0.1.4.md) document the checks and platform limits.
+The shared appearance tokens, reusable UI components, and native effect adapter keep screen layouts independent of platform-specific transparency. [Dependency review](docs/dependency-audit-2026-10-29.md), [UI validation](docs/ui-validation-2026-10-29.md), and [release 0.1.5](docs/release-0.1.5.md) document the checks and platform limits.
 
 ```text
 ├── Cargo.toml                      # Rust dependencies & metadata

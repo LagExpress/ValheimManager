@@ -115,8 +115,8 @@ rm -f "$SQUASHFS_TMP"
 # Use zstd compression
 mksquashfs "$APPDIR" "$SQUASHFS_TMP" -root-owned -noappend -comp zstd
 
-OUTPUT_APPIMAGE="$DIST_DIR/ValheimModpackStudio-0.1.4-x86_64.AppImage"
-TMP_APPIMAGE="$DIST_DIR/ValheimModpackStudio-0.1.4-x86_64.AppImage.tmp.$$"
+OUTPUT_APPIMAGE="$DIST_DIR/ValheimModpackStudio-0.1.5-x86_64.AppImage"
+TMP_APPIMAGE="$DIST_DIR/ValheimModpackStudio-0.1.5-x86_64.AppImage.tmp.$$"
 cat "$RUNTIME" "$SQUASHFS_TMP" > "$TMP_APPIMAGE"
 chmod +x "$TMP_APPIMAGE"
 mv -f "$TMP_APPIMAGE" "$OUTPUT_APPIMAGE"

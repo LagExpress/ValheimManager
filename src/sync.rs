@@ -38,6 +38,7 @@ pub struct SyncConfig {
     pub host_key_sha256: String,
     pub staging_dir: String,
     pub auto_refresh_staging: bool,
+    pub manage_bepinex_launcher: bool,
     pub language: Option<crate::i18n::Language>,
 }
 
@@ -51,6 +52,7 @@ impl Default for SyncConfig {
             host_key_sha256: String::new(),
             staging_dir: default_staging_dir().display().to_string(),
             auto_refresh_staging: true,
+            manage_bepinex_launcher: false,
             language: None,
         }
     }
@@ -800,6 +802,9 @@ fn progress(sink: &EventSink, current: usize, total: usize, label: impl Into<Str
 }
 
 fn run_sync(request: &SyncRequest, sink: &EventSink) -> Result<SyncSummary, String> {
+    if request.mode == SyncMode::CheckWrapper && !request.config.manage_bepinex_launcher {
+        return Err("Custom BepInEx launcher checks and repair are disabled. Enable the hosting compatibility setting first.".into());
+    }
     let started = Instant::now();
     let patterns = effective_patterns(&request.ignore_patterns);
     let ignore_matcher = IgnoreMatcher::new(&patterns);
@@ -939,7 +944,7 @@ fn run_sync(request: &SyncRequest, sink: &EventSink) -> Result<SyncSummary, Stri
             LogLevel::Info,
             "Checking server binary and wrapper...",
         );
-        let report = client.check_and_fix_wrapper()?;
+        let report = client.check_and_fix_wrapper(request.config.manage_bepinex_launcher)?;
         log_wrapper_report(sink, &report);
         summary.wrapper = Some(report);
         summary.elapsed_secs = started.elapsed().as_secs_f32();
@@ -1033,8 +1038,10 @@ fn run_sync(request: &SyncRequest, sink: &EventSink) -> Result<SyncSummary, Stri
     files_to_upload.dedup();
 
     if request.mode == SyncMode::Preview {
-        log(sink, LogLevel::Info, "Inspecting wrapper status...");
-        let wrapper = match client.inspect_wrapper() {
+        if request.config.manage_bepinex_launcher {
+            log(sink, LogLevel::Info, "Inspecting wrapper status...");
+        }
+        let wrapper = match client.inspect_wrapper(request.config.manage_bepinex_launcher) {
             Ok(report) => report,
             Err(e) => {
                 log(
@@ -1065,12 +1072,14 @@ fn run_sync(request: &SyncRequest, sink: &EventSink) -> Result<SyncSummary, Stri
         return Ok(summary);
     }
 
-    log(
-        sink,
-        LogLevel::Info,
-        "Checking server binary and wrapper...",
-    );
-    match client.check_and_fix_wrapper() {
+    if request.config.manage_bepinex_launcher {
+        log(
+            sink,
+            LogLevel::Info,
+            "Checking server binary and wrapper...",
+        );
+    }
+    match client.check_and_fix_wrapper(request.config.manage_bepinex_launcher) {
         Ok(report) => {
             log_wrapper_report(sink, &report);
             summary.wrapper = Some(report);
@@ -1253,6 +1262,10 @@ fn is_safe_remote_rel(rel: &str) -> bool {
 
 fn log_wrapper_report(sink: &EventSink, report: &WrapperReport) {
     match report.status {
+        WrapperStatus::Skipped => {
+            log(sink, LogLevel::Info, "Custom BepInEx launcher management is disabled; the executable, wrapper, and data symlink are left to your hosting provider.");
+            return;
+        }
         WrapperStatus::Intact => log(sink, LogLevel::Success, "Server wrapper is intact."),
         WrapperStatus::ElfNeedsRename => log(
             sink,
@@ -1297,6 +1310,64 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn launcher_preference_defaults_off_for_legacy_settings_and_roundtrips() {
+        let legacy = r#"{"host":"example.net","username":"viking","password":"test-password","staging_dir":"/tmp/staging"}"#;
+        let mut config: SyncConfig = serde_json::from_str(legacy).unwrap();
+        assert!(!config.manage_bepinex_launcher);
+        assert!(!SyncConfig::default().manage_bepinex_launcher);
+        config.manage_bepinex_launcher = true;
+        let restored: SyncConfig =
+            serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert!(restored.manage_bepinex_launcher);
+        assert_eq!(restored.host, "example.net");
+        assert_eq!(restored.password, "test-password");
+    }
+
+    #[test]
+    fn disabled_manual_repair_is_rejected_before_staging_or_connection() {
+        let request = SyncRequest {
+            mode: SyncMode::CheckWrapper,
+            config: SyncConfig {
+                staging_dir: String::new(),
+                ..Default::default()
+            },
+            source_bepinex: None,
+            ignore_patterns: Vec::new(),
+            refresh_staging: true,
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
+        let sink: EventSink =
+            Box::new(|_| panic!("A disabled repair must not start remote or staging work"));
+        assert!(run_sync(&request, &sink)
+            .err()
+            .unwrap()
+            .contains("disabled"));
+    }
+
+    #[test]
+    fn skipped_launcher_report_does_not_emit_missing_wrapper_or_symlink_warnings() {
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let sink: EventSink = Box::new(move |event| {
+            if let SyncEvent::Log(log) = event {
+                captured.lock().unwrap().push(log);
+            }
+        });
+        log_wrapper_report(
+            &sink,
+            &WrapperReport {
+                status: WrapperStatus::Skipped,
+                ..Default::default()
+            },
+        );
+        let logs = events.lock().unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].level, LogLevel::Info);
+        assert!(logs[0].message.contains("disabled"));
+        assert!(!logs[0].message.contains("missing"));
+    }
 
     #[test]
     fn default_ignore_patterns_match() {

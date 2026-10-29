@@ -35,7 +35,7 @@ export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-L $SHIM_DIR"
 cargo build --target x86_64-pc-windows-gnu --release
 
 mkdir -p "$ROOT_DIR/dist"
-cp -f "$ROOT_DIR/target/x86_64-pc-windows-gnu/release/valheim-modpack-studio.exe" "$ROOT_DIR/dist/ValheimModpackStudio-0.1.4-x86_64.exe"
+cp -f "$ROOT_DIR/target/x86_64-pc-windows-gnu/release/valheim-modpack-studio.exe" "$ROOT_DIR/dist/ValheimModpackStudio-0.1.5-x86_64.exe"
 
 echo ""
-echo "✔ Successfully generated Windows executable: dist/ValheimModpackStudio-0.1.4-x86_64.exe ($(du -h "$ROOT_DIR/dist/ValheimModpackStudio-0.1.4-x86_64.exe" | cut -f1))"
+echo "✔ Successfully generated Windows executable: dist/ValheimModpackStudio-0.1.5-x86_64.exe ($(du -h "$ROOT_DIR/dist/ValheimModpackStudio-0.1.5-x86_64.exe" | cut -f1))"

@@ -17,6 +17,7 @@ pub const WRAPPER_SCRIPT: &str = include_str!("assets/valheim_server_wrapper.sh"
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WrapperStatus {
+    Skipped,
     Intact,
     ElfNeedsRename,
     Missing,
@@ -28,6 +29,7 @@ impl WrapperStatus {
     #[allow(dead_code)]
     pub fn label(&self) -> &'static str {
         match self {
+            WrapperStatus::Skipped => "custom launcher checks disabled",
             WrapperStatus::Intact => "wrapper intact",
             WrapperStatus::ElfNeedsRename => "game binary needs rename",
             WrapperStatus::Missing => "wrapper missing",
@@ -44,6 +46,22 @@ pub struct WrapperReport {
     pub symlink_created: bool,
     pub symlink_present: bool,
     pub warnings: Vec<String>,
+}
+
+/// The disabled path must not evaluate the closure: it may access or replace
+/// hosting-provider-owned executables and data links outside BepInEx.
+fn with_launcher_management(
+    enabled: bool,
+    operation: impl FnOnce() -> Result<WrapperReport, String>,
+) -> Result<WrapperReport, String> {
+    if enabled {
+        operation()
+    } else {
+        Ok(WrapperReport {
+            status: WrapperStatus::Skipped,
+            ..Default::default()
+        })
+    }
 }
 
 pub struct RemoteClient {
@@ -400,7 +418,11 @@ impl RemoteClient {
         Ok(())
     }
 
-    pub fn inspect_wrapper(&self) -> Result<WrapperReport, String> {
+    pub fn inspect_wrapper(&self, enabled: bool) -> Result<WrapperReport, String> {
+        with_launcher_management(enabled, || self.inspect_wrapper_enabled())
+    }
+
+    fn inspect_wrapper_enabled(&self) -> Result<WrapperReport, String> {
         let names = self.root_names()?;
         let mut report = WrapperReport {
             symlink_present: names
@@ -432,7 +454,11 @@ impl RemoteClient {
         Ok(report)
     }
 
-    pub fn check_and_fix_wrapper(&self) -> Result<WrapperReport, String> {
+    pub fn check_and_fix_wrapper(&self, enabled: bool) -> Result<WrapperReport, String> {
+        with_launcher_management(enabled, || self.check_and_fix_wrapper_enabled())
+    }
+
+    fn check_and_fix_wrapper_enabled(&self) -> Result<WrapperReport, String> {
         let names = self.root_names()?;
         let mut report = WrapperReport::default();
         let mut needs_install = false;
@@ -504,4 +530,40 @@ impl RemoteClient {
 
 fn hex_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{:02x}", byte)).collect()
+}
+
+#[cfg(test)]
+mod launcher_policy_tests {
+    use super::*;
+
+    #[test]
+    fn disabled_launcher_management_never_evaluates_remote_operations() {
+        let report = with_launcher_management(false, || {
+            panic!("Disabled launcher management must not read or modify the remote executable")
+        })
+        .unwrap();
+        assert_eq!(report.status, WrapperStatus::Skipped);
+        assert!(!report.installed && !report.renamed_elf && !report.symlink_created);
+        assert!(report.warnings.is_empty());
+    }
+
+    #[test]
+    fn enabled_launcher_management_runs_the_operation_and_preserves_errors() {
+        let mut called = false;
+        let result = with_launcher_management(true, || {
+            called = true;
+            Ok(WrapperReport {
+                status: WrapperStatus::Intact,
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        assert!(called);
+        assert_eq!(result.status, WrapperStatus::Intact);
+        assert_eq!(
+            with_launcher_management(true, || Err("provider denied replacement".into()))
+                .unwrap_err(),
+            "provider denied replacement"
+        );
+    }
 }
