@@ -34,8 +34,11 @@ pub struct SyncConfig {
     pub port: u16,
     pub username: String,
     pub password: String,
+    #[serde(default)]
+    pub host_key_sha256: String,
     pub staging_dir: String,
     pub auto_refresh_staging: bool,
+    pub manage_bepinex_launcher: bool,
     pub language: Option<crate::i18n::Language>,
 }
 
@@ -46,8 +49,10 @@ impl Default for SyncConfig {
             port: 22,
             username: String::new(),
             password: String::new(),
+            host_key_sha256: String::new(),
             staging_dir: default_staging_dir().display().to_string(),
             auto_refresh_staging: true,
+            manage_bepinex_launcher: false,
             language: None,
         }
     }
@@ -189,41 +194,58 @@ fn normalize_rel(path: &str) -> String {
     path.replace('\\', "/").trim_matches('/').to_string()
 }
 
-pub fn is_ignored(rel_path: &str, patterns: &[String]) -> bool {
-    let normalized = normalize_rel(rel_path);
-    if normalized.is_empty() {
-        return false;
+#[derive(Clone)]
+pub struct IgnoreMatcher {
+    rules: Vec<(String, Option<Pattern>)>,
+    options: MatchOptions,
+}
+
+impl IgnoreMatcher {
+    pub fn new(patterns: &[String]) -> Self {
+        let rules = patterns
+            .iter()
+            .map(|pattern| {
+                let normalized = normalize_rel(pattern);
+                let compiled = Pattern::new(&normalized).ok();
+                (normalized, compiled)
+            })
+            .collect();
+        Self {
+            rules,
+            options: MatchOptions {
+                case_sensitive: !cfg!(windows),
+                require_literal_separator: false,
+                require_literal_leading_dot: false,
+            },
+        }
     }
 
-    let base = normalized.rsplit('/').next().unwrap_or(&normalized);
-    let options = MatchOptions {
-        case_sensitive: !cfg!(windows),
-        require_literal_separator: false,
-        require_literal_leading_dot: false,
-    };
-
-    for pattern in patterns {
-        let pattern = normalize_rel(pattern);
-        if pattern.is_empty() {
-            continue;
+    pub fn is_ignored(&self, rel_path: &str) -> bool {
+        let normalized = normalize_rel(rel_path);
+        if normalized.is_empty() {
+            return false;
         }
+        let base = normalized.rsplit('/').next().unwrap_or(&normalized);
 
-        if normalized == pattern
-            || normalized
-                .strip_prefix(&pattern)
-                .is_some_and(|rest| rest.starts_with('/'))
-        {
-            return true;
-        }
-
-        if let Ok(compiled) = Pattern::new(&pattern) {
-            if compiled.matches_with(&normalized, options) || compiled.matches_with(base, options) {
-                return true;
+        self.rules.iter().any(|(pattern, compiled)| {
+            if pattern.is_empty() {
+                return false;
             }
-        }
+            normalized == *pattern
+                || normalized
+                    .strip_prefix(pattern)
+                    .is_some_and(|rest| rest.starts_with('/'))
+                || compiled.as_ref().is_some_and(|compiled| {
+                    compiled.matches_with(&normalized, self.options)
+                        || compiled.matches_with(base, self.options)
+                })
+        })
     }
+}
 
-    false
+#[cfg(test)]
+fn is_ignored(rel_path: &str, patterns: &[String]) -> bool {
+    IgnoreMatcher::new(patterns).is_ignored(rel_path)
 }
 
 pub fn hash_file(path: &Path) -> Result<String, String> {
@@ -249,16 +271,43 @@ pub fn hash_file(path: &Path) -> Result<String, String> {
         .collect())
 }
 
-pub fn scan_local_files(
+#[cfg(test)]
+#[test]
+fn sha256_upgrade_remains_compatible_with_saved_hashes() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("fixture");
+    fs::write(&file, b"hello world").unwrap();
+    assert_eq!(
+        hash_file(&file).unwrap(),
+        "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+    );
+}
+
+#[cfg(test)]
+fn scan_local_files(
     staging: &Path,
     patterns: &[String],
+) -> Result<BTreeMap<String, String>, String> {
+    scan_local_files_with_matcher(staging, &IgnoreMatcher::new(patterns))
+}
+
+fn scan_local_files_with_matcher(
+    staging: &Path,
+    matcher: &IgnoreMatcher,
 ) -> Result<BTreeMap<String, String>, String> {
     if staging.as_os_str().is_empty() {
         return Err("Staging folder cannot be empty.".to_string());
     }
-    if !staging.exists() {
+    let staging_metadata = fs::symlink_metadata(staging).map_err(|e| {
+        format!(
+            "Could not inspect staging folder {}: {}",
+            staging.display(),
+            e
+        )
+    })?;
+    if staging_metadata.file_type().is_symlink() || !staging_metadata.is_dir() {
         return Err(format!(
-            "Staging folder does not exist: {}",
+            "Staging path is not a regular directory: {}",
             staging.display()
         ));
     }
@@ -266,16 +315,30 @@ pub fn scan_local_files(
     let mut files = BTreeMap::new();
     for sub in ["config", "plugins"] {
         let base = staging.join(sub);
-        if !base.exists() {
-            continue;
+        match fs::symlink_metadata(&base) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("Could not inspect {}: {}", base.display(), error)),
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => {
+                return Err(format!(
+                    "Staging path is not a regular directory: {}",
+                    base.display()
+                ))
+            }
         }
 
         for entry in WalkDir::new(&base)
             .into_iter()
-            .filter_entry(|entry| !is_ignored(&rel_from(entry.path(), &base, sub), patterns))
+            .filter_entry(|entry| !matcher.is_ignored(&rel_from(entry.path(), &base, sub)))
         {
             let entry = entry.map_err(|e| format!("Could not scan {}: {}", base.display(), e))?;
-            if !entry.path().is_file() {
+            if entry.file_type().is_symlink() {
+                return Err(format!(
+                    "Staging tree contains a symlink: {}",
+                    entry.path().display()
+                ));
+            }
+            if !entry.file_type().is_file() {
                 continue;
             }
 
@@ -285,7 +348,7 @@ pub fn scan_local_files(
                 .map_err(|e| format!("Could not compute relative path: {}", e))?;
             let rel = rel.to_string_lossy().replace('\\', "/");
 
-            if is_ignored(&rel, patterns) {
+            if matcher.is_ignored(&rel) {
                 continue;
             }
 
@@ -326,17 +389,33 @@ pub struct StagingStats {
     pub missing_sources: Vec<String>,
 }
 
-pub fn refresh_staging(
+#[cfg(test)]
+fn refresh_staging(
     source_bepinex: &Path,
     staging: &Path,
     patterns: &[String],
 ) -> Result<StagingStats, String> {
+    refresh_staging_with_matcher(source_bepinex, staging, &IgnoreMatcher::new(patterns))
+}
+
+fn refresh_staging_with_matcher(
+    source_bepinex: &Path,
+    staging: &Path,
+    matcher: &IgnoreMatcher,
+) -> Result<StagingStats, String> {
     if staging.as_os_str().is_empty() {
         return Err("Staging folder cannot be empty.".to_string());
     }
-    if !source_bepinex.is_dir() {
+    let source_metadata = fs::symlink_metadata(source_bepinex).map_err(|e| {
+        format!(
+            "Could not inspect source BepInEx folder {}: {}",
+            source_bepinex.display(),
+            e
+        )
+    })?;
+    if source_metadata.file_type().is_symlink() || !source_metadata.is_dir() {
         return Err(format!(
-            "Source BepInEx folder not found: {}",
+            "Source BepInEx path is not a regular directory: {}",
             source_bepinex.display()
         ));
     }
@@ -348,22 +427,85 @@ pub fn refresh_staging(
     }
 
     let mut stats = StagingStats::default();
-    fs::create_dir_all(staging)
-        .map_err(|e| format!("Could not create {}: {}", staging.display(), e))?;
+    match fs::symlink_metadata(staging) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(format!(
+                "Staging path is not a regular directory: {}",
+                staging.display()
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir_all(staging)
+                .map_err(|e| format!("Could not create {}: {}", staging.display(), e))?;
+        }
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect {}: {}",
+                staging.display(),
+                error
+            ));
+        }
+    }
+    let metadata = fs::symlink_metadata(staging)
+        .map_err(|e| format!("Could not inspect {}: {}", staging.display(), e))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!(
+            "Staging path is not a regular directory: {}",
+            staging.display()
+        ));
+    }
 
     for sub in ["config", "plugins"] {
         let source = source_bepinex.join(sub);
         let destination = staging.join(sub);
 
-        if !source.is_dir() {
-            stats.missing_sources.push(sub.to_string());
-            continue;
+        match fs::symlink_metadata(&source) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => {
+                return Err(format!(
+                    "Source path is not a regular directory: {}",
+                    source.display()
+                ))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                stats.missing_sources.push(sub.to_string());
+                if let Ok(metadata) = fs::symlink_metadata(&destination) {
+                    if metadata.file_type().is_symlink() {
+                        return Err(format!(
+                            "Staging path must not be a symlink: {}",
+                            destination.display()
+                        ));
+                    }
+                    stats.pruned += count_regular_files(&destination)?;
+                    remove_path(&destination)?;
+                }
+                continue;
+            }
+            Err(error) => return Err(format!("Could not inspect {}: {}", source.display(), error)),
+        };
+        if let Ok(destination_metadata) = fs::symlink_metadata(&destination) {
+            if destination_metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "Staging path must not be a symlink: {}",
+                    destination.display()
+                ));
+            }
+            if !destination_metadata.is_dir() {
+                fs::remove_file(&destination).map_err(|e| {
+                    format!(
+                        "Could not replace staging file {}: {}",
+                        destination.display(),
+                        e
+                    )
+                })?;
+            }
         }
 
         fs::create_dir_all(&destination)
             .map_err(|e| format!("Could not create {}: {}", destination.display(), e))?;
-        copy_tree(&source, &destination, sub, patterns, &mut stats)?;
-        prune_tree(&source, &destination, sub, patterns, &mut stats)?;
+        copy_tree(&source, &destination, sub, matcher, &mut stats)?;
+        prune_tree(&source, &destination, sub, matcher, &mut stats)?;
     }
 
     Ok(stats)
@@ -382,16 +524,39 @@ fn rel_from(path: &Path, base: &Path, prefix: &str) -> String {
     }
 }
 
+fn count_regular_files(path: &Path) -> Result<usize, String> {
+    WalkDir::new(path)
+        .into_iter()
+        .try_fold(0usize, |count, entry| {
+            let entry = entry.map_err(|e| format!("Could not scan {}: {}", path.display(), e))?;
+            Ok(count + usize::from(entry.file_type().is_file()))
+        })
+}
+
+fn remove_path(path: &Path) -> Result<(), String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("Could not inspect {}: {}", path.display(), error)),
+    };
+    let result = if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    };
+    result.map_err(|e| format!("Could not remove {}: {}", path.display(), e))
+}
+
 fn copy_tree(
     source: &Path,
     destination: &Path,
     prefix: &str,
-    patterns: &[String],
+    matcher: &IgnoreMatcher,
     stats: &mut StagingStats,
 ) -> Result<(), String> {
     for entry in WalkDir::new(source)
         .into_iter()
-        .filter_entry(|entry| !is_ignored(&rel_from(entry.path(), source, prefix), patterns))
+        .filter_entry(|entry| !matcher.is_ignored(&rel_from(entry.path(), source, prefix)))
     {
         let entry = entry.map_err(|e| format!("Could not read {}: {}", source.display(), e))?;
         if entry.path() == source {
@@ -404,10 +569,37 @@ fn copy_tree(
             .map_err(|e| format!("Could not compute relative path: {}", e))?;
         let target = destination.join(rel);
 
-        if entry.file_type().is_dir() {
+        if entry.file_type().is_symlink() {
+            return Err(format!(
+                "Source tree contains a symlink: {}",
+                entry.path().display()
+            ));
+        } else if entry.file_type().is_dir() {
+            if let Ok(metadata) = fs::symlink_metadata(&target) {
+                if metadata.file_type().is_symlink() {
+                    return Err(format!(
+                        "Staging tree contains a symlink: {}",
+                        target.display()
+                    ));
+                }
+                if !metadata.is_dir() {
+                    remove_path(&target)?;
+                }
+            }
             fs::create_dir_all(&target)
                 .map_err(|e| format!("Could not create {}: {}", target.display(), e))?;
-        } else if entry.path().is_file() {
+        } else if entry.file_type().is_file() {
+            if let Ok(metadata) = fs::symlink_metadata(&target) {
+                if metadata.file_type().is_symlink() {
+                    return Err(format!(
+                        "Staging tree contains a symlink: {}",
+                        target.display()
+                    ));
+                }
+                if metadata.is_dir() {
+                    remove_path(&target)?;
+                }
+            }
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)
                     .map_err(|e| format!("Could not create {}: {}", parent.display(), e))?;
@@ -431,16 +623,19 @@ fn prune_tree(
     source: &Path,
     destination: &Path,
     prefix: &str,
-    patterns: &[String],
+    matcher: &IgnoreMatcher,
     stats: &mut StagingStats,
 ) -> Result<(), String> {
-    for entry in WalkDir::new(destination)
-        .contents_first(true)
-        .into_iter()
-        .filter_map(|entry| entry.ok())
-    {
+    for entry in WalkDir::new(destination).contents_first(true).into_iter() {
+        let entry = entry.map_err(|e| {
+            format!(
+                "Could not scan staging folder {}: {}",
+                destination.display(),
+                e
+            )
+        })?;
         let rel = rel_from(entry.path(), destination, prefix);
-        if is_ignored(&rel, patterns) {
+        if matcher.is_ignored(&rel) {
             continue;
         }
 
@@ -448,13 +643,39 @@ fn prune_tree(
             if entry.path() == destination {
                 continue;
             }
-            let empty = fs::read_dir(entry.path())
-                .map(|mut entries| entries.next().is_none())
-                .unwrap_or(false);
+            let mut children = fs::read_dir(entry.path()).map_err(|e| {
+                format!(
+                    "Could not read staging folder {}: {}",
+                    entry.path().display(),
+                    e
+                )
+            })?;
+            let empty = match children.next() {
+                None => true,
+                Some(Ok(_)) => false,
+                Some(Err(e)) => {
+                    return Err(format!(
+                        "Could not read staging folder {}: {}",
+                        entry.path().display(),
+                        e
+                    ))
+                }
+            };
             if empty {
-                let _ = fs::remove_dir(entry.path());
+                fs::remove_dir(entry.path()).map_err(|e| {
+                    format!(
+                        "Could not remove empty staging folder {}: {}",
+                        entry.path().display(),
+                        e
+                    )
+                })?;
             }
-        } else if entry.path().is_file() {
+        } else if entry.file_type().is_symlink() {
+            return Err(format!(
+                "Staging tree contains a symlink: {}",
+                entry.path().display()
+            ));
+        } else if entry.file_type().is_file() {
             let rel_to_source = entry
                 .path()
                 .strip_prefix(destination)
@@ -581,8 +802,12 @@ fn progress(sink: &EventSink, current: usize, total: usize, label: impl Into<Str
 }
 
 fn run_sync(request: &SyncRequest, sink: &EventSink) -> Result<SyncSummary, String> {
+    if request.mode == SyncMode::CheckWrapper && !request.config.manage_bepinex_launcher {
+        return Err("Custom BepInEx launcher checks and repair are disabled. Enable the hosting compatibility setting first.".into());
+    }
     let started = Instant::now();
     let patterns = effective_patterns(&request.ignore_patterns);
+    let ignore_matcher = IgnoreMatcher::new(&patterns);
     let staging = expand_tilde(&request.config.staging_dir);
     if staging.as_os_str().is_empty() {
         return Err("Staging folder cannot be empty.".to_string());
@@ -614,7 +839,7 @@ fn run_sync(request: &SyncRequest, sink: &EventSink) -> Result<SyncSummary, Stri
             LogLevel::Info,
             format!("Refreshing staging from {}...", source.display()),
         );
-        let stats = refresh_staging(source, &staging, &patterns)?;
+        let stats = refresh_staging_with_matcher(source, &staging, &ignore_matcher)?;
         summary.staged_copied = stats.copied;
         summary.staged_pruned = stats.pruned;
 
@@ -654,7 +879,7 @@ fn run_sync(request: &SyncRequest, sink: &EventSink) -> Result<SyncSummary, Stri
 
     let current_hashes = if needs_staging {
         log(sink, LogLevel::Info, "Scanning local files...");
-        let hashes = scan_local_files(&staging, &patterns)?;
+        let hashes = scan_local_files_with_matcher(&staging, &ignore_matcher)?;
         summary.local_count = hashes.len();
         log(
             sink,
@@ -679,6 +904,7 @@ fn run_sync(request: &SyncRequest, sink: &EventSink) -> Result<SyncSummary, Stri
         request.config.port,
         &request.config.username,
         &request.config.password,
+        &request.config.host_key_sha256,
     )?;
 
     if let Some(fingerprint) = fingerprint {
@@ -718,7 +944,7 @@ fn run_sync(request: &SyncRequest, sink: &EventSink) -> Result<SyncSummary, Stri
             LogLevel::Info,
             "Checking server binary and wrapper...",
         );
-        let report = client.check_and_fix_wrapper()?;
+        let report = client.check_and_fix_wrapper(request.config.manage_bepinex_launcher)?;
         log_wrapper_report(sink, &report);
         summary.wrapper = Some(report);
         summary.elapsed_secs = started.elapsed().as_secs_f32();
@@ -769,10 +995,16 @@ fn run_sync(request: &SyncRequest, sink: &EventSink) -> Result<SyncSummary, Stri
                 LogLevel::Info,
                 "Scanning remote server for removed files...",
             );
-            let remote_config =
-                client.list_files(&format!("{}/config", REMOTE_ROOT), "config", &patterns)?;
-            let remote_plugins =
-                client.list_files(&format!("{}/plugins", REMOTE_ROOT), "plugins", &patterns)?;
+            let remote_config = client.list_files(
+                &format!("{}/config", REMOTE_ROOT),
+                "config",
+                &ignore_matcher,
+            )?;
+            let remote_plugins = client.list_files(
+                &format!("{}/plugins", REMOTE_ROOT),
+                "plugins",
+                &ignore_matcher,
+            )?;
 
             let mut remote_files: HashSet<String> = HashSet::new();
             remote_files.extend(remote_config);
@@ -782,7 +1014,7 @@ fn run_sync(request: &SyncRequest, sink: &EventSink) -> Result<SyncSummary, Stri
             files_to_delete = remote_files
                 .iter()
                 .filter(|file| {
-                    !current_hashes.contains_key(*file) && !is_ignored(file.as_str(), &patterns)
+                    !current_hashes.contains_key(*file) && !ignore_matcher.is_ignored(file.as_str())
                 })
                 .cloned()
                 .collect();
@@ -806,8 +1038,10 @@ fn run_sync(request: &SyncRequest, sink: &EventSink) -> Result<SyncSummary, Stri
     files_to_upload.dedup();
 
     if request.mode == SyncMode::Preview {
-        log(sink, LogLevel::Info, "Inspecting wrapper status...");
-        let wrapper = match client.inspect_wrapper() {
+        if request.config.manage_bepinex_launcher {
+            log(sink, LogLevel::Info, "Inspecting wrapper status...");
+        }
+        let wrapper = match client.inspect_wrapper(request.config.manage_bepinex_launcher) {
             Ok(report) => report,
             Err(e) => {
                 log(
@@ -838,12 +1072,14 @@ fn run_sync(request: &SyncRequest, sink: &EventSink) -> Result<SyncSummary, Stri
         return Ok(summary);
     }
 
-    log(
-        sink,
-        LogLevel::Info,
-        "Checking server binary and wrapper...",
-    );
-    match client.check_and_fix_wrapper() {
+    if request.config.manage_bepinex_launcher {
+        log(
+            sink,
+            LogLevel::Info,
+            "Checking server binary and wrapper...",
+        );
+    }
+    match client.check_and_fix_wrapper(request.config.manage_bepinex_launcher) {
         Ok(report) => {
             log_wrapper_report(sink, &report);
             summary.wrapper = Some(report);
@@ -870,52 +1106,6 @@ fn run_sync(request: &SyncRequest, sink: &EventSink) -> Result<SyncSummary, Stri
 
     let total_operations = files_to_delete.len() + files_to_upload.len();
     let mut completed = 0;
-
-    if !files_to_delete.is_empty() {
-        log(
-            sink,
-            LogLevel::Info,
-            format!(
-                "Deleting {} removed file(s) from the server...",
-                files_to_delete.len()
-            ),
-        );
-
-        for rel in &files_to_delete {
-            if request.cancel.load(Ordering::Relaxed) {
-                summary.cancelled = true;
-                break;
-            }
-            if !is_safe_remote_rel(rel) || is_ignored(rel, &patterns) {
-                continue;
-            }
-
-            let remote = format!("{}/{}", REMOTE_ROOT, rel);
-            match client.remove_file(&remote) {
-                Ok(()) => {
-                    summary.deleted += 1;
-                    let _ = client.clean_empty_dirs(parent_remote(&remote), &patterns);
-                    log(sink, LogLevel::Info, format!("Deleted {}", rel));
-                }
-                Err(e) => {
-                    summary.failed_deletes += 1;
-                    log(
-                        sink,
-                        LogLevel::Warning,
-                        format!("Could not delete {}: {}", rel, e),
-                    );
-                }
-            }
-
-            completed += 1;
-            progress(
-                sink,
-                completed,
-                total_operations,
-                format!("Deleted {}", rel),
-            );
-        }
-    }
 
     let mut new_state = current_hashes.clone();
 
@@ -972,6 +1162,58 @@ fn run_sync(request: &SyncRequest, sink: &EventSink) -> Result<SyncSummary, Stri
         }
     }
 
+    if !files_to_delete.is_empty() && !summary.cancelled && summary.failed_uploads == 0 {
+        log(
+            sink,
+            LogLevel::Info,
+            format!(
+                "Deleting {} removed file(s) from the server...",
+                files_to_delete.len()
+            ),
+        );
+
+        for rel in &files_to_delete {
+            if request.cancel.load(Ordering::Relaxed) {
+                summary.cancelled = true;
+                break;
+            }
+            if !is_safe_remote_rel(rel) || ignore_matcher.is_ignored(rel) {
+                continue;
+            }
+
+            let remote = format!("{}/{}", REMOTE_ROOT, rel);
+            match client.remove_file(&remote) {
+                Ok(()) => {
+                    summary.deleted += 1;
+                    let _ = client.clean_empty_dirs(parent_remote(&remote), &ignore_matcher);
+                    log(sink, LogLevel::Info, format!("Deleted {}", rel));
+                }
+                Err(e) => {
+                    summary.failed_deletes += 1;
+                    log(
+                        sink,
+                        LogLevel::Warning,
+                        format!("Could not delete {}: {}", rel, e),
+                    );
+                }
+            }
+
+            completed += 1;
+            progress(
+                sink,
+                completed,
+                total_operations,
+                format!("Deleted {}", rel),
+            );
+        }
+    } else if !files_to_delete.is_empty() && summary.failed_uploads > 0 {
+        log(
+            sink,
+            LogLevel::Warning,
+            "Remote deletions were skipped because at least one upload failed.",
+        );
+    }
+
     if summary.cancelled {
         log(
             sink,
@@ -1020,6 +1262,10 @@ fn is_safe_remote_rel(rel: &str) -> bool {
 
 fn log_wrapper_report(sink: &EventSink, report: &WrapperReport) {
     match report.status {
+        WrapperStatus::Skipped => {
+            log(sink, LogLevel::Info, "Custom BepInEx launcher management is disabled; the executable, wrapper, and data symlink are left to your hosting provider.");
+            return;
+        }
         WrapperStatus::Intact => log(sink, LogLevel::Success, "Server wrapper is intact."),
         WrapperStatus::ElfNeedsRename => log(
             sink,
@@ -1064,6 +1310,64 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn launcher_preference_defaults_off_for_legacy_settings_and_roundtrips() {
+        let legacy = r#"{"host":"example.net","username":"viking","password":"test-password","staging_dir":"/tmp/staging"}"#;
+        let mut config: SyncConfig = serde_json::from_str(legacy).unwrap();
+        assert!(!config.manage_bepinex_launcher);
+        assert!(!SyncConfig::default().manage_bepinex_launcher);
+        config.manage_bepinex_launcher = true;
+        let restored: SyncConfig =
+            serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert!(restored.manage_bepinex_launcher);
+        assert_eq!(restored.host, "example.net");
+        assert_eq!(restored.password, "test-password");
+    }
+
+    #[test]
+    fn disabled_manual_repair_is_rejected_before_staging_or_connection() {
+        let request = SyncRequest {
+            mode: SyncMode::CheckWrapper,
+            config: SyncConfig {
+                staging_dir: String::new(),
+                ..Default::default()
+            },
+            source_bepinex: None,
+            ignore_patterns: Vec::new(),
+            refresh_staging: true,
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
+        let sink: EventSink =
+            Box::new(|_| panic!("A disabled repair must not start remote or staging work"));
+        assert!(run_sync(&request, &sink)
+            .err()
+            .unwrap()
+            .contains("disabled"));
+    }
+
+    #[test]
+    fn skipped_launcher_report_does_not_emit_missing_wrapper_or_symlink_warnings() {
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let sink: EventSink = Box::new(move |event| {
+            if let SyncEvent::Log(log) = event {
+                captured.lock().unwrap().push(log);
+            }
+        });
+        log_wrapper_report(
+            &sink,
+            &WrapperReport {
+                status: WrapperStatus::Skipped,
+                ..Default::default()
+            },
+        );
+        let logs = events.lock().unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].level, LogLevel::Info);
+        assert!(logs[0].message.contains("disabled"));
+        assert!(!logs[0].message.contains("missing"));
+    }
 
     #[test]
     fn default_ignore_patterns_match() {

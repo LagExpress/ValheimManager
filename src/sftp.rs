@@ -4,9 +4,9 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::time::Duration;
 
-use ssh2::{FileStat, HashType, Session, Sftp};
+use ssh2::{FileStat, FileType, HashType, Session, Sftp};
 
-use crate::sync::is_ignored;
+use crate::sync::IgnoreMatcher;
 
 pub const REMOTE_ROOT: &str = "/BepInEx";
 pub const WRAPPER_PATH: &str = "/valheim_server.x86_64";
@@ -17,6 +17,7 @@ pub const WRAPPER_SCRIPT: &str = include_str!("assets/valheim_server_wrapper.sh"
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WrapperStatus {
+    Skipped,
     Intact,
     ElfNeedsRename,
     Missing,
@@ -28,6 +29,7 @@ impl WrapperStatus {
     #[allow(dead_code)]
     pub fn label(&self) -> &'static str {
         match self {
+            WrapperStatus::Skipped => "custom launcher checks disabled",
             WrapperStatus::Intact => "wrapper intact",
             WrapperStatus::ElfNeedsRename => "game binary needs rename",
             WrapperStatus::Missing => "wrapper missing",
@@ -46,6 +48,22 @@ pub struct WrapperReport {
     pub warnings: Vec<String>,
 }
 
+/// The disabled path must not evaluate the closure: it may access or replace
+/// hosting-provider-owned executables and data links outside BepInEx.
+fn with_launcher_management(
+    enabled: bool,
+    operation: impl FnOnce() -> Result<WrapperReport, String>,
+) -> Result<WrapperReport, String> {
+    if enabled {
+        operation()
+    } else {
+        Ok(WrapperReport {
+            status: WrapperStatus::Skipped,
+            ..Default::default()
+        })
+    }
+}
+
 pub struct RemoteClient {
     sftp: Sftp,
     _session: Session,
@@ -57,6 +75,7 @@ impl RemoteClient {
         port: u16,
         username: &str,
         password: &str,
+        expected_fingerprint: &str,
     ) -> Result<(Self, Option<String>), String> {
         let host = host.trim();
         let username = username.trim();
@@ -97,6 +116,37 @@ impl RemoteClient {
         session
             .handshake()
             .map_err(|e| format!("SSH handshake failed: {}", e))?;
+
+        let fingerprint = session.host_key_hash(HashType::Sha256).map(hex_bytes);
+        let expected = expected_fingerprint
+            .trim()
+            .strip_prefix("SHA256:")
+            .unwrap_or(expected_fingerprint.trim());
+        if expected.is_empty() {
+            let actual = fingerprint.as_deref().ok_or_else(|| {
+                "SSH server did not provide a SHA-256 host key fingerprint".to_string()
+            })?;
+            return Err(format!(
+                "SSH server key is not trusted yet. Verify fingerprint SHA256:{} out of band, then enter its 64-character hex value in the server key field and reconnect.",
+                actual
+            ));
+        }
+        if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(
+                "Trusted server key must be a 64-character SHA-256 hex fingerprint.".to_string(),
+            );
+        }
+        if fingerprint
+            .as_deref()
+            .is_none_or(|actual| !actual.eq_ignore_ascii_case(expected))
+        {
+            return Err(format!(
+                "SSH server host key mismatch. Expected SHA256:{}, received SHA256:{}.",
+                expected,
+                fingerprint.as_deref().unwrap_or("unavailable")
+            ));
+        }
+
         session
             .userauth_password(username, password)
             .map_err(|e| format!("Password authentication failed: {}", e))?;
@@ -105,7 +155,6 @@ impl RemoteClient {
             return Err("Password authentication failed".to_string());
         }
 
-        let fingerprint = session.host_key_hash(HashType::Sha256).map(hex_bytes);
         let sftp = session
             .sftp()
             .map_err(|e| format!("Could not open SFTP subsystem: {}", e))?;
@@ -186,10 +235,38 @@ impl RemoteClient {
             current.push('/');
             current.push_str(part);
 
-            if self.sftp.stat(Path::new(&current)).is_err() {
-                self.sftp
-                    .mkdir(Path::new(&current), 0o755)
-                    .map_err(|e| format!("Could not create remote folder {}: {}", current, e))?;
+            match self.sftp.lstat(Path::new(&current)) {
+                Ok(stat) if stat.is_dir() => {}
+                Ok(stat) if stat.file_type() == FileType::Symlink => {
+                    return Err(format!(
+                        "Refusing to use remote symlink as a directory: {}",
+                        current
+                    ));
+                }
+                Ok(_) => {
+                    return Err(format!("Remote path is not a directory: {}", current));
+                }
+                Err(error) => {
+                    let error = std::io::Error::from(error);
+                    if error.kind() != std::io::ErrorKind::NotFound {
+                        return Err(format!(
+                            "Could not inspect remote folder {}: {}",
+                            current, error
+                        ));
+                    }
+                    self.sftp.mkdir(Path::new(&current), 0o755).map_err(|e| {
+                        format!("Could not create remote folder {}: {}", current, e)
+                    })?;
+                    let created = self.sftp.lstat(Path::new(&current)).map_err(|e| {
+                        format!("Could not verify remote folder {}: {}", current, e)
+                    })?;
+                    if !created.is_dir() {
+                        return Err(format!(
+                            "Remote path is not a directory after creation: {}",
+                            current
+                        ));
+                    }
+                }
             }
         }
         Ok(())
@@ -199,10 +276,46 @@ impl RemoteClient {
         &self,
         dir: &str,
         base_rel: &str,
-        patterns: &[String],
+        patterns: &IgnoreMatcher,
     ) -> Result<Vec<String>, String> {
-        if self.sftp.stat(Path::new(dir)).is_err() {
-            return Ok(Vec::new());
+        if matches!(base_rel, "config" | "plugins") {
+            match self.sftp.lstat(Path::new(REMOTE_ROOT)) {
+                Ok(stat) if stat.is_dir() => {}
+                Ok(stat) if stat.file_type() == FileType::Symlink => {
+                    return Err(format!("Remote tree root is a symlink: {}", REMOTE_ROOT));
+                }
+                Ok(_) => {
+                    return Err(format!(
+                        "Remote tree root is not a directory: {}",
+                        REMOTE_ROOT
+                    ))
+                }
+                Err(error) => {
+                    let error = std::io::Error::from(error);
+                    if error.kind() == std::io::ErrorKind::NotFound {
+                        return Ok(Vec::new());
+                    }
+                    return Err(format!("Could not inspect remote tree root: {}", error));
+                }
+            }
+        }
+
+        match self.sftp.lstat(Path::new(dir)) {
+            Ok(stat) if stat.is_dir() => {}
+            Ok(stat) if stat.file_type() == FileType::Symlink => {
+                return Err(format!("Remote tree contains a symlink: {}", dir));
+            }
+            Ok(_) => return Err(format!("Remote path is not a directory: {}", dir)),
+            Err(error) => {
+                let error = std::io::Error::from(error);
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    return Ok(Vec::new());
+                }
+                return Err(format!(
+                    "Could not inspect remote folder {}: {}",
+                    dir, error
+                ));
+            }
         }
 
         let entries = self
@@ -222,15 +335,22 @@ impl RemoteClient {
                 format!("{}/{}", base_rel, name)
             };
 
-            if is_ignored(&rel, patterns) {
+            if patterns.is_ignored(&rel) {
                 continue;
             }
 
-            if stat.is_dir() {
+            if stat.file_type() == FileType::Symlink {
+                return Err(format!("Remote tree contains a symlink: {}", rel));
+            } else if stat.is_dir() {
                 let child = format!("{}/{}", dir.trim_end_matches('/'), name);
                 files.extend(self.list_files(&child, &rel, patterns)?);
-            } else {
+            } else if stat.is_file() {
                 files.push(rel);
+            } else {
+                return Err(format!(
+                    "Remote tree contains an unsupported file type: {}",
+                    rel
+                ));
             }
         }
 
@@ -257,13 +377,17 @@ impl RemoteClient {
             .map_err(|e| format!("Could not delete {}: {}", remote, e))
     }
 
-    pub fn clean_empty_dirs(&self, start_dir: &str, patterns: &[String]) -> Result<(), String> {
+    pub fn clean_empty_dirs(
+        &self,
+        start_dir: &str,
+        patterns: &IgnoreMatcher,
+    ) -> Result<(), String> {
         let stop = REMOTE_ROOT;
         let mut current = start_dir.trim_end_matches('/').to_string();
 
         while current != stop && current.starts_with(&format!("{}/", stop)) {
             let rel = current[stop.len() + 1..].to_string();
-            if is_ignored(&rel, patterns) {
+            if patterns.is_ignored(&rel) {
                 break;
             }
 
@@ -294,7 +418,11 @@ impl RemoteClient {
         Ok(())
     }
 
-    pub fn inspect_wrapper(&self) -> Result<WrapperReport, String> {
+    pub fn inspect_wrapper(&self, enabled: bool) -> Result<WrapperReport, String> {
+        with_launcher_management(enabled, || self.inspect_wrapper_enabled())
+    }
+
+    fn inspect_wrapper_enabled(&self) -> Result<WrapperReport, String> {
         let names = self.root_names()?;
         let mut report = WrapperReport {
             symlink_present: names
@@ -326,7 +454,11 @@ impl RemoteClient {
         Ok(report)
     }
 
-    pub fn check_and_fix_wrapper(&self) -> Result<WrapperReport, String> {
+    pub fn check_and_fix_wrapper(&self, enabled: bool) -> Result<WrapperReport, String> {
+        with_launcher_management(enabled, || self.check_and_fix_wrapper_enabled())
+    }
+
+    fn check_and_fix_wrapper_enabled(&self) -> Result<WrapperReport, String> {
         let names = self.root_names()?;
         let mut report = WrapperReport::default();
         let mut needs_install = false;
@@ -335,12 +467,17 @@ impl RemoteClient {
             match self.read_header(WRAPPER_PATH) {
                 Ok(header) if header.starts_with(b"\x7fELF") => {
                     report.status = WrapperStatus::ElfNeedsRename;
-                    report.renamed_elf = true;
-                    let _ = self.sftp.unlink(Path::new(WRAPPER_BIN_PATH));
+                    if self.sftp.stat(Path::new(WRAPPER_BIN_PATH)).is_ok() {
+                        return Err(format!(
+                            "Refusing to replace existing game binary backup {}. Move it aside before repairing the wrapper.",
+                            WRAPPER_BIN_PATH
+                        ));
+                    }
                     self.sftp
                         .rename(Path::new(WRAPPER_PATH), Path::new(WRAPPER_BIN_PATH), None)
                         .map_err(|e| format!("Could not rename the game binary: {}", e))?;
                     self.chmod(WRAPPER_BIN_PATH, 0o755)?;
+                    report.renamed_elf = true;
                     needs_install = true;
                 }
                 Ok(header) if header.starts_with(b"#!") => {
@@ -393,4 +530,40 @@ impl RemoteClient {
 
 fn hex_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{:02x}", byte)).collect()
+}
+
+#[cfg(test)]
+mod launcher_policy_tests {
+    use super::*;
+
+    #[test]
+    fn disabled_launcher_management_never_evaluates_remote_operations() {
+        let report = with_launcher_management(false, || {
+            panic!("Disabled launcher management must not read or modify the remote executable")
+        })
+        .unwrap();
+        assert_eq!(report.status, WrapperStatus::Skipped);
+        assert!(!report.installed && !report.renamed_elf && !report.symlink_created);
+        assert!(report.warnings.is_empty());
+    }
+
+    #[test]
+    fn enabled_launcher_management_runs_the_operation_and_preserves_errors() {
+        let mut called = false;
+        let result = with_launcher_management(true, || {
+            called = true;
+            Ok(WrapperReport {
+                status: WrapperStatus::Intact,
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        assert!(called);
+        assert_eq!(result.status, WrapperStatus::Intact);
+        assert_eq!(
+            with_launcher_management(true, || Err("provider denied replacement".into()))
+                .unwrap_err(),
+            "provider denied replacement"
+        );
+    }
 }

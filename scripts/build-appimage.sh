@@ -3,6 +3,8 @@ set -e
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+VERSION=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' Cargo.toml | head -n 1)
+: "${VERSION:?Could not read the app version from Cargo.toml}"
 
 echo "🦀 Building Valheim Modpack Studio (Release binary)..."
 cargo build --release
@@ -115,8 +117,8 @@ rm -f "$SQUASHFS_TMP"
 # Use zstd compression
 mksquashfs "$APPDIR" "$SQUASHFS_TMP" -root-owned -noappend -comp zstd
 
-OUTPUT_APPIMAGE="$DIST_DIR/ValheimModpackStudio-x86_64.AppImage"
-TMP_APPIMAGE="$DIST_DIR/ValheimModpackStudio-x86_64.AppImage.tmp.$$"
+OUTPUT_APPIMAGE="$DIST_DIR/ValheimManager-${VERSION}.AppImage"
+TMP_APPIMAGE="$DIST_DIR/ValheimManager-${VERSION}.AppImage.tmp.$$"
 cat "$RUNTIME" "$SQUASHFS_TMP" > "$TMP_APPIMAGE"
 chmod +x "$TMP_APPIMAGE"
 mv -f "$TMP_APPIMAGE" "$OUTPUT_APPIMAGE"

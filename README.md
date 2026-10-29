@@ -8,6 +8,12 @@ Runs natively on **Linux** (as a standalone binary and **AppImage**) and **Windo
 
 ## ✨ Features
 
+- **Appearance**: Modern Nordic Light, Dark, Glass Light, and Glass Dark presets. The first launch follows the OS preference; subsequent explicit choices are saved in `appearance.json` beside the application settings.
+- **Saved modpack configurations**: Save and switch between modpacks, restoring names, descriptions, declared versions, source profiles, output folders, icons, website URLs, mod selections/version overrides, and configuration selections. The last saved modpack loads at startup.
+- **Version choice on build**: Both Build ZIP actions ask whether to keep the declared version or increment its patch number. An **Always increment** checkbox skips the question for that saved modpack. The increment is remembered only when the ZIP succeeds; failed or cancelled builds do not consume a version.
+- **Readable activity logs**: Long messages, paths, and fingerprints wrap onto additional lines. A cached layout keeps the bounded 2,000-entry log list virtualized.
+- **Responsive layout**: Supports windows from 640 × 480 logical pixels, compact navigation and list rows, wide-screen layouts, and OS display scaling.
+- **Native desktop glass**: Uses the background-effect protocol on COSMIC/Wayland, KDE's blur protocol where available, and documented Desktop Acrylic on Windows 11 build 22621 or newer. Compositor and system transparency settings control the effect; unsupported systems use a readable app-drawn glass backdrop.
 - **⚡ Native Rust Performance**: Built with `egui` / `eframe` for an immediate-mode, lightweight, responsive desktop GUI.
 - **📂 Profile Auto-Detection**:
   - Automatically locates r2modman profiles across Linux (`~/.config/r2modmanPlus-local/Valheim/profiles`) and Windows (`%APPDATA%/r2modmanPlus-local/Valheim/profiles`).
@@ -18,41 +24,56 @@ Runs natively on **Linux** (as a standalone binary and **AppImage**) and **Windo
   - Quick buttons: *Select All*, *Select Enabled Only*, *Deselect All*.
   - **Inline Version Overrides**: Click and edit any mod's version directly inside the table.
 - **⚙️ Curated Configuration Selection**:
-  - Reads all `.cfg` files and preset folders from `BepInEx/config/`.
-  - **Security Filter**: Auto-excludes sensitive files (such as `dezzycode.betrvalheim.quickconnect.dat` containing server passwords and player-specific `.dat` files).
-  - **Performance Filter**: Auto-excludes runtime caches (`MultiplayerClientCache` world records and performance analyzer profiling dumps).
+  - Reads files and folders from `BepInEx/config/` and selects ordinary configurations by default.
+  - **Security Filter**: Labels sensitive files (such as quick-connect credentials and player-specific `.dat` files) and excludes them by default.
+  - **Performance Filter**: Labels runtime caches and reports, which are excluded by default.
+  - Review selected configs before sharing; sensitive files and caches can be included explicitly.
   - Categorization badges: `SAFE`, `SENSITIVE`, and `CACHE`.
 - **🏷️ Thunderstore Modpack Compliant**:
   - Generates valid `manifest.json` with dependency array.
   - Auto-generates markdown `README.md` with a clean table of mods, versions, and installation instructions.
   - Generates/embeds a compliant 256×256 `icon.png` (or accepts a custom image).
   - Packs into a clean `.zip` in `dist/<Name>-<Version>.zip`.
-- **🚀 One-Click Build & Reveal**: Build in seconds and open the output folder directly from the GUI.
-- **🔄 Server Sync**: Deploy `BepInEx/config` and `BepInEx/plugins` to a dedicated server over SFTP, with hash-based uploads, safe deletion of removed files, staging refresh, ignore patterns, and automatic repair of the modded server wrapper after game updates.
+- **🚀 Build & Open**: Build the archive and open its containing output folder directly from the GUI.
+- **🔄 Server Sync**: Deploy `BepInEx/config` and `BepInEx/plugins` to a dedicated server over SFTP, with hash-based uploads, safe deletion of removed files, staging refresh, ignore patterns, and optional custom launcher repair for compatible hosts.
 
 ---
+
+## Saving a modpack and updating it
+
+1. Enter the modpack metadata and choose its source profile, mods, configurations, and output folder.
+2. On **Profile & Info**, use **Save configuration**. Use **Save as new** to keep another modpack separately, and the saved-configuration selector to return to one.
+3. Press **Build ZIP** or the Build & Export action. Choose **Keep** to rebuild that version, or **Increment to** to advance the patch version (for example, `1.2.9` → `1.2.10`). Cancelling the dialog leaves the declaration untouched.
+4. Enable **Always increment the patch version when building a ZIP** in the metadata/build view, or select the checkbox in the dialog. This preference is stored with that modpack and can be turned off again.
+
+Builds also save the current configuration automatically. Only a successful build commits an incremented version. Installed mod updates are picked up when reloading a profile; explicit dependency version overrides remain pinned.
+
+Presets are stored in `modpacks.json` beside `appearance.json` and `sync.json`; they do not include server credentials. An unreadable saved-configuration file is reported rather than overwritten.
 
 ## 🔄 Server Sync
 
 The **Server Sync** tab keeps a dedicated Valheim server's BepInEx folder aligned with the selected profile.
 
+**Hosting compatibility:** custom BepInEx launcher checks and repair are **off by default**, including when older saved settings have no value for this option. Leave this off when the provider already supplies BepInEx or does not allow executable replacement. To use the original custom-host behavior, enable **Enable custom BepInEx launcher checks and repair** under **Server Connection → Hosting compatibility**. The checkbox saves immediately. Enabled checks inspect the server launcher during preview and repair it before uploads; they may rename/replace `valheim_server.x86_64` and create its data symlink. When disabled, these operations are skipped and **Check & Fix Wrapper** is disabled. Config/plugin sync, SSH host-key verification, and `/BepInEx` folder access checks remain available.
+
 1. Select the source profile on the **Profile & Info** tab.
 2. Enter the SFTP host, port, username, and password.
 3. Choose a staging folder. The default is `~/Desktop/valheim` (`%USERPROFILE%\Desktop\valheim` on Windows).
-4. Use **Preview Changes** to inspect pending uploads and deletions.
-5. Use **Sync Changes** to upload changed files and remove remote files that are no longer present locally.
+4. On first connection, the app displays the server's SHA-256 host-key fingerprint and blocks authentication until you verify it out of band and enter its 64-character hex value in **Trusted server key**. The `SHA256:` prefix is optional.
+5. Use **Preview Changes** to inspect pending uploads and deletions.
+6. Use **Sync Changes** to upload changed files and remove remote files that are no longer present locally. Deletions are skipped if any upload fails.
 
 Additional actions:
 
 - **Refresh Staging** mirrors the profile's `BepInEx/config` and `BepInEx/plugins` into the staging folder. Obsolete non-ignored files are pruned.
 - **Force Upload All** re-uploads every local file.
 - **Upload Only** uploads changes without deleting anything remotely.
-- **Check & Fix Wrapper** restores `/valheim_server.x86_64`, backs up a game-update ELF to `/valheim_server.x86_64.bin`, and ensures the data symlink exists.
+- **Check & Fix Wrapper**, available when custom launcher management is enabled, restores `/valheim_server.x86_64`, backs up a game-update ELF to `/valheim_server.x86_64.bin`, and ensures the data symlink exists.
 - **Test Connection** verifies the SFTP credentials and remote BepInEx folder.
 
-Sync state is stored in `<staging>/.sync_state.json`. Ignore patterns are read from `<staging>/.sync_ignore`; the built-in defaults protect runtime state files and large blueprint folders. The server password is stored in plain text in the application config folder (`sync.json`), with owner-only permissions on Unix. SSH host keys are accepted on first use; compare the SHA-256 fingerprint in the sync log with your server's fingerprint.
+Sync state is stored in `<staging>/.sync_state.json`. Ignore patterns are read from `<staging>/.sync_ignore`; the built-in defaults protect runtime state files and large blueprint folders. The server password is stored in plain text in the application config folder (`sync.json`), with owner-only permissions on Unix.
 
-> **Safety:** the sync engine refuses to delete remote files when the local scan finds zero files, and it never deletes outside `config/` or `plugins/`.
+> **Safety:** the sync engine refuses to delete remote files when the local scan finds zero files, never deletes outside `config/` or `plugins/`, rejects remote symlinks, and skips deletions if an upload fails.
 
 ---
 
@@ -83,12 +104,12 @@ To build a standalone, portable `.AppImage` that runs on any Linux distribution:
 devenv shell -- appimage
 
 # Output is generated at:
-dist/ValheimModpackStudio-x86_64.AppImage
+dist/ValheimManager-0.1.6.AppImage
 ```
 
 Run the AppImage:
 ```bash
-./dist/ValheimModpackStudio-x86_64.AppImage
+./dist/ValheimManager-0.1.6.AppImage
 ```
 
 ---
@@ -105,26 +126,34 @@ scripts\build-windows.bat
 
 The output binary will be created at:
 ```text
-dist\ValheimModpackStudio-x86_64.exe
+dist\ValheimManager-0.1.6.exe
 ```
 
 #### Option B: Automated GitHub Actions CI/CD
 This repository includes a ready-to-use GitHub Actions workflow at [`.github/workflows/release.yml`](.github/workflows/release.yml):
-- On every push or tag (e.g. `v1.0.0`), GitHub Actions automatically compiles both:
-  - `ValheimModpackStudio-x86_64.AppImage` (Linux)
-  - `ValheimModpackStudio-x86_64.exe` (Windows)
-- Builds are uploaded to GitHub Artifacts and published directly to GitHub Releases.
+- Pushes to `main`, pull requests to `main`, and version tags run quality checks and build both:
+  - `ValheimManager-0.1.6.AppImage` (Linux)
+  - `ValheimManager-0.1.6.exe` (Windows)
+- Builds are uploaded to GitHub Actions artifacts. A tag matching the Cargo version (for example `v0.1.6`) also publishes a GitHub release containing the EXE, AppImage, and SHA-256 checksums. Source is available through GitHub's built-in Source code (zip) and Source code (tar.gz) downloads for the tag; CI does not upload duplicate source archives.
 
 ---
 
 ## 🛠️ Project Architecture
+
+The shared appearance tokens, reusable UI components, and native effect adapter keep screen layouts independent of platform-specific transparency. [Dependency review](docs/dependency-audit-2026-10-29.md), [UI validation](docs/ui-validation-2026-10-29.md), and [release 0.1.6](docs/release-0.1.6.md) document the checks and platform limits.
 
 ```text
 ├── Cargo.toml                      # Rust dependencies & metadata
 ├── devenv.nix                      # Declarative NixOS environment with GUI libs
 ├── src/
 │   ├── main.rs                     # Native window setup and application entry
-│   ├── app.rs                      # egui UI implementation (tabs, tables, events)
+│   ├── app.rs                      # Application state and worker events
+│   ├── app/ui.rs                   # Responsive screens and navigation
+│   ├── appearance.rs               # Theme palettes, bundled font, preferences
+│   ├── modpack_config.rs           # Saved modpack library and checked version increments
+│   ├── app/saved.rs                # Preset restoration and build-version lifecycle
+│   ├── ui_components.rs            # Shared cards, forms, icons, and backdrop
+│   ├── platform_effects.rs         # Optional Wayland and Windows effects
 │   ├── profile.rs                  # r2modman scanner (mods.yml & BepInEx/config)
 │   ├── packager.rs                 # Manifest, README, icon, and ZIP builder
 │   ├── sync.rs                     # Staging refresh, hashing, ignore rules, sync engine

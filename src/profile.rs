@@ -1,8 +1,9 @@
-use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ModManager {
     R2Modman,
     Gale,
@@ -91,16 +92,6 @@ pub enum ConfigCategory {
     Cache,
 }
 
-impl ConfigCategory {
-    pub fn label(&self) -> &'static str {
-        match self {
-            ConfigCategory::Safe => "SAFE",
-            ConfigCategory::Sensitive => "SENSITIVE / DAT",
-            ConfigCategory::Cache => "CACHE / REPORT",
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ConfigItem {
     pub name: String,
@@ -116,7 +107,11 @@ pub fn get_r2modman_roots() -> Vec<PathBuf> {
 
     // Linux standard paths
     if let Some(cfg) = dirs::config_dir() {
-        roots.push(cfg.join("r2modmanPlus-local").join("Valheim").join("profiles"));
+        roots.push(
+            cfg.join("r2modmanPlus-local")
+                .join("Valheim")
+                .join("profiles"),
+        );
         roots.push(cfg.join("r2modman").join("Valheim").join("profiles"));
     }
 
@@ -135,10 +130,17 @@ pub fn get_r2modman_roots() -> Vec<PathBuf> {
 
     // Windows standard AppData / Roaming
     if let Some(data) = dirs::data_dir() {
-        roots.push(data.join("r2modmanPlus-local").join("Valheim").join("profiles"));
+        roots.push(
+            data.join("r2modmanPlus-local")
+                .join("Valheim")
+                .join("profiles"),
+        );
     }
 
-    roots.into_iter().filter(|p| p.exists() && p.is_dir()).collect()
+    roots
+        .into_iter()
+        .filter(|p| p.exists() && p.is_dir())
+        .collect()
 }
 
 pub fn get_gale_roots() -> Vec<PathBuf> {
@@ -146,7 +148,11 @@ pub fn get_gale_roots() -> Vec<PathBuf> {
 
     // Linux Gale paths
     if let Some(data) = dirs::data_dir() {
-        roots.push(data.join("com.kesomannen.gale").join("valheim").join("profiles"));
+        roots.push(
+            data.join("com.kesomannen.gale")
+                .join("valheim")
+                .join("profiles"),
+        );
         roots.push(data.join("gale").join("valheim").join("profiles"));
     }
 
@@ -164,13 +170,24 @@ pub fn get_gale_roots() -> Vec<PathBuf> {
 
     // Windows Gale paths (AppData/Local or AppData/Roaming)
     if let Some(data) = dirs::data_dir() {
-        roots.push(data.join("com.kesomannen.gale").join("valheim").join("profiles"));
+        roots.push(
+            data.join("com.kesomannen.gale")
+                .join("valheim")
+                .join("profiles"),
+        );
     }
     if let Some(cfg) = dirs::config_dir() {
-        roots.push(cfg.join("com.kesomannen.gale").join("valheim").join("profiles"));
+        roots.push(
+            cfg.join("com.kesomannen.gale")
+                .join("valheim")
+                .join("profiles"),
+        );
     }
 
-    roots.into_iter().filter(|p| p.exists() && p.is_dir()).collect()
+    roots
+        .into_iter()
+        .filter(|p| p.exists() && p.is_dir())
+        .collect()
 }
 
 #[allow(dead_code)]
@@ -191,7 +208,8 @@ pub fn list_profiles_in_dir(dir: &Path) -> Vec<String> {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() && (path.join("mods.yml").exists() || path.join("export.r2x").exists()) {
+            if path.is_dir() && (path.join("mods.yml").exists() || path.join("export.r2x").exists())
+            {
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                     profiles.push(name.to_string());
                 }
@@ -294,8 +312,10 @@ pub fn scan_profile_configs(profile_dir: &Path) -> Vec<ConfigItem> {
         return items;
     }
 
-    let sensitive_re = Regex::new(r"(?i)quickconnect|player_\d+|credential|secret|token|\.dat$").unwrap();
-    let cache_re = Regex::new(r"(?i)MultiplayerClientCache|Reports|ClusterCache|\.records$|\.log$").unwrap();
+    let sensitive_re =
+        Regex::new(r"(?i)quickconnect|player_\d+|credential|secret|token|\.dat$").unwrap();
+    let cache_re =
+        Regex::new(r"(?i)MultiplayerClientCache|Reports|ClusterCache|\.records$|\.log$").unwrap();
 
     if let Ok(entries) = std::fs::read_dir(&config_dir) {
         for entry in entries.flatten() {
@@ -330,7 +350,7 @@ pub fn scan_profile_configs(profile_dir: &Path) -> Vec<ConfigItem> {
         }
     }
 
-    items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    items.sort_by_cached_key(|item| item.name.to_lowercase());
     items
 }
 
@@ -338,7 +358,8 @@ fn is_pure_cache_dir(dir: &Path) -> bool {
     if !dir.is_dir() {
         return false;
     }
-    let cache_re = Regex::new(r"(?i)MultiplayerClientCache|Reports|ClusterCache|\.records$|\.log$").unwrap();
+    let cache_re =
+        Regex::new(r"(?i)MultiplayerClientCache|Reports|ClusterCache|\.records$|\.log$").unwrap();
     if let Ok(children) = std::fs::read_dir(dir) {
         let list: Vec<_> = children.flatten().collect();
         if list.is_empty() {
