@@ -19,7 +19,10 @@ const SIZES: [(u32, u32); 5] = [
 ];
 
 fn fixture() -> ModpackApp {
-    let mut app = ModpackApp::default();
+    let mut app = ModpackApp {
+        language: Language::English,
+        ..Default::default()
+    };
     static FIXTURE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let id = FIXTURE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     app.modpack_library = ModpackLibrary::default();
@@ -223,6 +226,70 @@ fn responsive_matrix_preserves_state_and_cached_views() {
         .indices
         .iter()
         .all(|i| app.mods[*i].display_name.contains("Epic Loot")));
+}
+
+#[test]
+fn sync_toolbar_stays_visible_and_precedes_the_connection_panels() {
+    fn visible_text(output: &egui::FullOutput, label: &str) -> egui::Rect {
+        let shape = output.shapes.iter().rev().find(|shape| {
+            matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.job.text == label)
+        }).unwrap_or_else(|| panic!("Missing label: {label}"));
+        let rect = shape.shape.visual_bounding_rect();
+        assert!(
+            shape.clip_rect.expand(1.0).contains_rect(rect),
+            "Clipped label: {label}, bounds {rect:?}, clip {:?}",
+            shape.clip_rect
+        );
+        rect
+    }
+
+    for theme in ThemePreset::ALL {
+        for language in [Language::English, Language::Spanish] {
+            for size in [(640, 480), (1920, 1080)] {
+                let mut app = fixture();
+                app.active_tab = ActiveTab::ServerSync;
+                app.sync.logs.truncate(4);
+                app.theme = theme;
+                app.language = language;
+                let ignore_text = app.sync.ignore_text.clone();
+                let (ctx, mut output) = render(&mut app, size, 1.0);
+                output.textures_delta.clear();
+                let actions = visible_text(&output, language.heading_actions());
+                let ignore = visible_text(&output, language.heading_ignore());
+                let mut buttons = Vec::new();
+                for label in [
+                    language.btn_action_preview(),
+                    language.btn_action_sync(),
+                    language.btn_action_upload_only(),
+                    language.btn_action_force(),
+                    language.btn_action_wrapper(),
+                    language.btn_action_refresh(),
+                    language.btn_action_test(),
+                ] {
+                    let rect = visible_text(&output, label);
+                    assert!(rect.top() > actions.bottom() && rect.bottom() < ignore.top());
+                    buttons.push(rect);
+                }
+                if size.0 >= 1100 {
+                    let source = visible_text(&output, language.heading_source_profile());
+                    let preview = visible_text(&output, language.heading_preview());
+                    assert!(source.top() > ignore.bottom());
+                    assert!(source.left() < preview.left());
+                    assert!((source.top() - preview.top()).abs() < 2.0);
+                    assert!(buttons
+                        .iter()
+                        .all(|rect| (rect.top() - buttons[0].top()).abs() < 2.0));
+                }
+                app.sync.running = true;
+                app.sync.active_mode = Some(SyncMode::SyncChanges);
+                let mut running = render_in(&mut app, &ctx, size, 1.0);
+                running.textures_delta.clear();
+                visible_text(&running, tr(language, "Cancel", "Cancelar"));
+                assert_eq!(app.sync.ignore_text, ignore_text);
+                assert!(app.sync.running);
+            }
+        }
+    }
 }
 
 #[test]

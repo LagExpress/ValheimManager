@@ -4,6 +4,13 @@ Release notes describe changes introduced in each version. Use Added, Changed,
 Fixed, Removed, and Security sections where applicable. Keep entries focused on
 user-visible behavior; omit build reports, test counts, and development history.
 
+## [0.1.8] - 2026-10-30
+
+### Changed
+
+- Moved Server Sync actions into a full-width toolbar above ignore settings and the connection/inspection panels.
+- Ignore settings open by default on wide windows and start collapsed on compact windows.
+
 ## [0.1.7] - 2026-10-29
 
 ### Fixed

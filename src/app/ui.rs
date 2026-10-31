@@ -1219,11 +1219,13 @@ impl ModpackApp {
                             self.sync.warning = None;
                         }
                     }
+                    self.sync_actions(ui);
+                    self.sync_ignore(ui);
+                    ui.add_space(8.0);
                     if ui.available_width() >= components::SYNC_BREAKPOINT {
                         ui.columns(2, |columns| {
                             self.sync_source(&mut columns[0]);
                             self.sync_connection(&mut columns[0]);
-                            self.sync_actions(&mut columns[0]);
                             self.sync_preview(&mut columns[1]);
                             self.sync_summary(&mut columns[1]);
                             self.sync_logs(&mut columns[1]);
@@ -1231,12 +1233,10 @@ impl ModpackApp {
                     } else {
                         self.sync_source(ui);
                         self.sync_connection(ui);
-                        self.sync_actions(ui);
                         self.sync_preview(ui);
                         self.sync_summary(ui);
                         self.sync_logs(ui);
                     }
-                    self.sync_ignore(ui);
                 });
             });
     }
@@ -1411,8 +1411,6 @@ impl ModpackApp {
                     if ui.button(self.language.btn_action_upload_only()).clicked() {
                         self.start_sync(SyncMode::UploadOnly, ui.ctx());
                     }
-                });
-                ui.horizontal_wrapped(|ui| {
                     for (mode, label) in [
                         (SyncMode::ForceAll, self.language.btn_action_force()),
                         (SyncMode::CheckWrapper, self.language.btn_action_wrapper()),
@@ -1457,6 +1455,7 @@ impl ModpackApp {
     fn sync_ignore(&mut self, ui: &mut Ui) {
         egui::CollapsingHeader::new(self.language.heading_ignore())
             .id_salt("advanced_ignore")
+            .default_open(ui.available_width() >= components::SYNC_BREAKPOINT)
             .show(ui, |ui| {
                 ui.label(self.language.desc_ignore());
                 ui.add(

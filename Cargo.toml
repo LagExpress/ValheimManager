@@ -1,6 +1,6 @@
 [package]
 name = "valheim-modpack-studio"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 authors = ["Mateo"]
 description = "Cross-platform GUI for creating Valheim modpacks and syncing BepInEx files to dedicated servers"
