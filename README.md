@@ -135,16 +135,16 @@ To build an AppImage for x86-64 Linux desktops, including NixOS:
 devenv shell -- appimage
 
 # Output is generated at:
-dist/ValheimManager-0.1.9.AppImage
+dist/ValheimManager-0.1.10.AppImage
 ```
 
 Run the AppImage:
 ```bash
-./dist/ValheimManager-0.1.9.AppImage
+./dist/ValheimManager-0.1.10.AppImage
 ```
 
 If FUSE mounting is unavailable, use
-`./dist/ValheimManager-0.1.9.AppImage --appimage-extract-and-run`.
+`./dist/ValheimManager-0.1.10.AppImage --appimage-extract-and-run`.
 
 CI and local builds use the same packager. It bundles the ELF loader, glibc, and
 the Wayland/X11/OpenGL/Vulkan client libraries with their dependencies, keyboard
@@ -158,8 +158,8 @@ All project build and validation tools are declared in `devenv.nix`. Check a
 packaged runtime or open it on an isolated headless test display with:
 
 ```bash
-devenv shell -- bash scripts/check-appimage.sh dist/ValheimManager-0.1.9.AppImage
-devenv shell -- bash scripts/smoke-appimage.sh dist/ValheimManager-0.1.9.AppImage
+devenv shell -- bash scripts/check-appimage.sh dist/ValheimManager-0.1.10.AppImage
+devenv shell -- bash scripts/smoke-appimage.sh dist/ValheimManager-0.1.10.AppImage
 ```
 
 The smoke test uses temporary settings and home directories and never connects
@@ -181,15 +181,15 @@ scripts\build-windows.bat
 
 The output binary will be created at:
 ```text
-dist\ValheimManager-0.1.9.exe
+dist\ValheimManager-0.1.10.exe
 ```
 
 #### Option B: Automated GitHub Actions CI/CD
 This repository includes a ready-to-use GitHub Actions workflow at [`.github/workflows/release.yml`](.github/workflows/release.yml):
 - Pushes to `main`, pull requests to `main`, and version tags run quality checks and build both:
-  - `ValheimManager-0.1.9.AppImage` (Linux)
-  - `ValheimManager-0.1.9.exe` (Windows)
-- Builds are uploaded to GitHub Actions artifacts. A tag matching the Cargo version (for example `v0.1.9`) also publishes a GitHub release containing the EXE, AppImage, and SHA-256 checksums. Source is available through GitHub's built-in Source code (zip) and Source code (tar.gz) downloads for the tag; CI does not upload duplicate source archives.
+  - `ValheimManager-0.1.10.AppImage` (Linux)
+  - `ValheimManager-0.1.10.exe` (Windows)
+- Builds are uploaded to GitHub Actions artifacts. A tag matching the Cargo version (for example `v0.1.10`) also publishes a GitHub release containing the EXE, AppImage, and SHA-256 checksums. Source is available through GitHub's built-in Source code (zip) and Source code (tar.gz) downloads for the tag; CI does not upload duplicate source archives.
 - Release descriptions come from [CHANGELOG.md](CHANGELOG.md). Before tagging a version, add its entry under `## [<version>] - YYYY-MM-DD`, using Added, Changed, Fixed, Removed, or Security sections as needed. CI rejects a version without a nonempty changelog entry and publishes that entry as the release description.
 
 ---

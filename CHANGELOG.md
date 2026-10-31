@@ -4,7 +4,7 @@ Release notes describe changes introduced in each version. Use Added, Changed,
 Fixed, Removed, and Security sections where applicable. Keep entries focused on
 user-visible behavior; omit build reports, test counts, and development history.
 
-## [Unreleased]
+## [0.1.10] - 2026-10-31
 
 ### Added
 
