@@ -23,6 +23,8 @@ use eframe::egui::{self, Color32, RichText, Ui};
 
 mod saved;
 use saved::{BuildAttempt, BuildVersionPrompt};
+mod readme;
+use readme::ReadmePreview;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum ActiveTab {
@@ -151,6 +153,7 @@ pub struct ModpackApp {
     preview_filter: FilterCache,
     logs_filter: FilterCache,
     log_layout: LogLayoutCache,
+    readme_preview: ReadmePreview,
     // Language
     pub language: Language,
 
@@ -174,6 +177,7 @@ pub struct ModpackApp {
     pub pack_name: String,
     pub pack_version: String,
     pub pack_description: String,
+    pub documentation: crate::package_docs::PackageDocumentation,
     pub pack_website: String,
     pub custom_icon_path: Option<PathBuf>,
     pub output_dir: PathBuf,
@@ -253,6 +257,7 @@ impl Default for ModpackApp {
             preview_filter: FilterCache::default(),
             logs_filter: FilterCache::default(),
             log_layout: LogLayoutCache::default(),
+            readme_preview: ReadmePreview::default(),
             language,
             mod_manager,
             profile_roots: roots,
@@ -266,6 +271,7 @@ impl Default for ModpackApp {
             pack_name: "Valheim_Modpack".to_string(),
             pack_version: "1.0.0".to_string(),
             pack_description: "A curated Valheim modpack with custom configurations".to_string(),
+            documentation: crate::package_docs::PackageDocumentation::default(),
             pack_website: String::new(),
             custom_icon_path: None,
             output_dir: default_output_dir,
@@ -367,10 +373,7 @@ impl ModpackApp {
     }
 
     fn launch_build(&mut self, ctx: &egui::Context) {
-        let clean_name = self
-            .pack_name
-            .trim()
-            .replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
+        let clean_name = crate::packager::clean_package_name(&self.pack_name);
         if clean_name.is_empty() {
             self.status_message = Some(("Modpack name cannot be empty".to_string(), true));
             return;
@@ -397,6 +400,7 @@ impl ModpackApp {
             name: clean_name,
             version: self.pack_version.clone(),
             description: self.pack_description.clone(),
+            documentation: self.documentation.clone(),
             website_url: self.pack_website.clone(),
             selected_mods,
             selected_configs,
@@ -504,7 +508,7 @@ impl ModpackApp {
                 BuildEvent::Finished(result) => {
                     self.building = false;
                     self.build_receiver = None;
-                    let version_save_error = self.finish_build_version(result.is_ok()).err();
+                    let version_save_error = self.finish_build_version(result.as_ref().ok()).err();
                     match result {
                         Ok(res) => {
                             self.build_progress = Some((1.0, "Complete!".to_string()));
@@ -536,7 +540,7 @@ impl ModpackApp {
 
         if disconnected {
             if self.build_attempt.is_some() {
-                let _ = self.finish_build_version(false);
+                let _ = self.finish_build_version(None);
                 self.build_progress = None;
                 self.status_message =
                     Some(("Build worker disconnected before completion".into(), true));

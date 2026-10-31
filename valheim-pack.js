@@ -406,14 +406,13 @@ function generateReadme(name, version, description, mods, includedConfigs) {
 
 > ${description}
 
-**Version:** \`${version}\`  
-**Powered by:** Valheim r2modman / Thunderstore
+**Version:** \`${version}\`
 
 ---
 
 ## 📦 Included Mods (${mods.length})
 
-| Mod | Author | Version | Thunderstore Package |
+| Mod | Author | Version | Package |
 | --- | --- | --- | --- |
 ${mods.map(m => `| **${m.displayName}** | ${m.authorName || '-'} | \`${m.version}\` | [\`${m.name}\`](${m.websiteUrl || `https://thunderstore.io/c/valheim/p/${m.name}/`}) |`).join('\n')}
 
@@ -421,24 +420,7 @@ ${mods.map(m => `| **${m.displayName}** | ${m.authorName || '-'} | \`${m.version
 
 ## ⚙️ Included Configurations (${includedConfigs.length})
 
-This modpack includes curated, pre-tuned configuration files:
 ${includedConfigs.map(c => `- \`${c.name}\``).join('\n')}
-
-> **Review before sharing:** Selected configuration files are included as listed. Sensitive files or runtime caches may be present when explicitly selected; check the generated config folder for private data.
-
----
-
-## 🚀 Installation
-
-### Via r2modman / Thunderstore Mod Manager (Recommended)
-1. Open **r2modman** (or Thunderstore Mod Manager).
-2. Select **Valheim**.
-3. Create or select a profile.
-4. Go to **Online**, search for **${name}**, and click **Download with dependencies**.
-5. All required mods and tailored configuration settings will be applied automatically!
-
----
-*Generated with Valheim Modpack Generator.*
 `;
 }
 

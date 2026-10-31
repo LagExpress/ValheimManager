@@ -34,6 +34,8 @@ fn fixture() -> ModpackApp {
     app.always_increment_version = false;
     app.pack_version = "1.0.0".into();
     app.custom_icon_path = None;
+    app.documentation = crate::package_docs::PackageDocumentation::default();
+    app.readme_preview = ReadmePreview::default();
     app.sync.config = SyncConfig::default();
     app.sync.config.manage_bepinex_launcher = true;
     app.sync.config.host = "valheim.example.net".into();
@@ -125,6 +127,7 @@ fn fixture() -> ModpackApp {
         mod_count: 23,
         config_count: 20,
         zip_size_bytes: 1_500_000,
+        release: Box::default(),
     });
     app.data_revision += 1;
     app.sync.preview_revision += 1;
@@ -383,6 +386,12 @@ fn saved_configurations_restore_metadata_source_selections_and_installed_updates
     app.pack_name = "Saved_North".into();
     app.pack_version = "1.2.3".into();
     app.pack_description = "Remember this description".into();
+    app.documentation.readme.additional_markdown = "## Gameplay\n\nExplore together.".into();
+    app.documentation.readme.include_mods = false;
+    app.documentation.changelog.draft = Some(crate::package_docs::ChangelogDraft {
+        notes: "### Fixed\n\n- Balanced combat.".into(),
+        edited: true,
+    });
     app.pack_website = "https://example.com".into();
     app.custom_icon_path = Some(directory.path().join("icon.png"));
     app.mods[0].current_version = "9.8.7".into();
@@ -419,6 +428,279 @@ fn saved_configurations_restore_metadata_source_selections_and_installed_updates
     assert_eq!(restarted.output_dir, app.output_dir);
     assert_eq!(restarted.custom_icon_path, app.custom_icon_path);
     assert_eq!(restarted.modpack_library.configurations.len(), 2);
+    assert_eq!(restarted.documentation.readme, app.documentation.readme);
+    assert_eq!(
+        restarted
+            .documentation
+            .changelog
+            .draft
+            .as_ref()
+            .unwrap()
+            .notes,
+        "### Fixed\n\n- Balanced combat."
+    );
+}
+
+#[test]
+fn older_saved_configurations_default_to_both_generated_lists_without_history() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = build_fixture(directory.path());
+    app.save_modpack_configuration(false).unwrap();
+    let mut old: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&app.modpack_library_path).unwrap()).unwrap();
+    old["configurations"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("documentation");
+    std::fs::write(&app.modpack_library_path, serde_json::to_vec(&old).unwrap()).unwrap();
+    let restored = ModpackLibrary::load(&app.modpack_library_path).unwrap();
+    let docs = &restored.configurations[0].documentation;
+    assert!(docs.readme.include_mods && docs.readme.include_configs);
+    assert!(docs.readme.additional_markdown.is_empty());
+    assert!(docs.changelog.entries.is_empty() && docs.changelog.draft.is_none());
+}
+
+fn archive_document(app: &ModpackApp, name: &str) -> String {
+    use std::io::Read;
+    let mut zip = zip::ZipArchive::new(
+        std::fs::File::open(&app.last_build_result.as_ref().unwrap().zip_path).unwrap(),
+    )
+    .unwrap();
+    let mut text = String::new();
+    zip.by_name(name)
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    text
+}
+
+#[test]
+fn previews_match_built_documents_and_failed_builds_keep_edits_and_history() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = build_fixture(directory.path());
+    let ctx = egui::Context::default();
+    app.documentation.readme.additional_markdown = "## Gameplay\n\nA custom guide.".into();
+    app.documentation.readme.include_configs = false;
+    app.refresh_readme_preview();
+    let first_readme = app.readme_preview.markdown.clone();
+    let first_changelog = app.readme_preview.changelog_markdown.clone();
+    app.start_versioned_build(&ctx, false, false);
+    finish_worker(&mut app);
+    assert_eq!(archive_document(&app, "README.md"), first_readme);
+    assert_eq!(archive_document(&app, "CHANGELOG.md"), first_changelog);
+    assert_eq!(app.documentation.changelog.entries.len(), 1);
+    app.mods[0].current_version = "2.0.0".into();
+    app.always_increment_version = true;
+    app.readme_preview.dirty = true;
+    app.refresh_readme_preview();
+    assert!(app.readme_preview.changelog_editor.contains("→ `2.0.0`"));
+    assert!(app.readme_preview.markdown.contains("**Version:** `1.0.1`"));
+    let notes = "### Fixed\n\n- Balanced resources.\n";
+    app.documentation.changelog.draft = Some(crate::package_docs::ChangelogDraft {
+        notes: notes.into(),
+        edited: true,
+    });
+    app.readme_preview.dirty = true;
+    app.refresh_readme_preview();
+    let next_readme = app.readme_preview.markdown.clone();
+    let next_changelog = app.readme_preview.changelog_markdown.clone();
+    let blocked = directory.path().join("blocked");
+    std::fs::write(&blocked, "not a folder").unwrap();
+    app.output_dir = blocked;
+    app.trigger_build(&ctx);
+    finish_worker(&mut app);
+    assert_eq!(app.pack_version, "1.0.0");
+    assert_eq!(app.documentation.changelog.entries.len(), 1);
+    assert_eq!(
+        app.documentation.changelog.draft.as_ref().unwrap().notes,
+        notes
+    );
+    app.output_dir = directory.path().join("dist");
+    app.trigger_build(&ctx);
+    finish_worker(&mut app);
+    assert_eq!(archive_document(&app, "README.md"), next_readme);
+    assert_eq!(archive_document(&app, "CHANGELOG.md"), next_changelog);
+    let saved = ModpackLibrary::load(&app.modpack_library_path).unwrap();
+    assert_eq!(
+        saved.configurations[0]
+            .documentation
+            .changelog
+            .entries
+            .len(),
+        2
+    );
+    assert_eq!(
+        saved.configurations[0].documentation.changelog.entries[0].notes,
+        notes
+    );
+    assert!(saved.configurations[0]
+        .documentation
+        .changelog
+        .draft
+        .is_none());
+}
+
+#[test]
+fn document_preview_is_cached_and_refreshes_on_metadata_and_selection_edits() {
+    let mut app = fixture();
+    app.refresh_readme_preview();
+    let allocation = app.readme_preview.markdown.as_ptr();
+    app.refresh_readme_preview();
+    assert_eq!(app.readme_preview.markdown.as_ptr(), allocation);
+    app.documentation.readme.include_mods = false;
+    app.refresh_readme_preview();
+    assert!(!app.readme_preview.markdown.contains("Included Mods"));
+    app.documentation.readme.include_mods = true;
+    app.active_tab = ActiveTab::Mods;
+    render(&mut app, (640, 480), 1.0).1.textures_delta.clear();
+    for item in &mut app.mods {
+        item.selected = false;
+    }
+    app.mods[0].selected = true;
+    app.active_tab = ActiveTab::Build;
+    render(&mut app, (640, 480), 1.0).1.textures_delta.clear();
+    assert!(app.readme_preview.markdown.contains("Included Mods (1)"));
+}
+
+fn document_frame(
+    app: &mut ModpackApp,
+    ctx: &egui::Context,
+    size: (u32, u32),
+    scale: f32,
+) -> egui::FullOutput {
+    document_frame_with_events(app, ctx, size, scale, Vec::new())
+}
+
+fn document_frame_with_events(
+    app: &mut ModpackApp,
+    ctx: &egui::Context,
+    size: (u32, u32),
+    scale: f32,
+    events: Vec<egui::Event>,
+) -> egui::FullOutput {
+    Palette::new(app.theme, false).apply(ctx, app.theme);
+    let mut input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(size.0 as f32, size.1 as f32),
+        )),
+        time: Some(ctx.input(|i| i.time) + 0.1),
+        events,
+        ..Default::default()
+    };
+    input
+        .viewports
+        .entry(egui::ViewportId::ROOT)
+        .or_default()
+        .native_pixels_per_point = Some(scale);
+    ctx.run_ui(input, |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("document_test_outer")
+            .show(ui, |ui| app.package_documents(ui));
+    })
+}
+
+#[test]
+fn package_document_viewports_support_the_responsive_matrix_and_large_lists() {
+    let mut app = fixture();
+    for theme in ThemePreset::ALL {
+        for language in [Language::English, Language::Spanish] {
+            for scale in [1.0, 1.5, 2.0] {
+                let ctx = egui::Context::default();
+                crate::appearance::install_fonts(&ctx);
+                app.theme = theme;
+                app.language = language;
+                for size in SIZES {
+                    for changelog in [false, true] {
+                        app.readme_preview.show_changelog = changelog;
+                        for source in [false, true] {
+                            app.readme_preview.source_view = source;
+                            for _ in 0..3 {
+                                let mut output = document_frame(&mut app, &ctx, size, scale);
+                                assert!(
+                                    output.shapes.len() < 2500,
+                                    "Unbounded document rendering: {}",
+                                    output.shapes.len()
+                                );
+                                output.textures_delta.clear();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "Exports package README and changelog panes for visual review"]
+fn export_package_document_previews() {
+    let root = PathBuf::from("target/ui-previews")
+        .join(env!("CARGO_PKG_VERSION"))
+        .join("documents");
+    std::fs::create_dir_all(&root).unwrap();
+    let mut capture = Capture::new();
+    for theme in ThemePreset::ALL {
+        for language in [Language::English, Language::Spanish] {
+            let mut app = fixture();
+            app.theme = theme;
+            app.language = language;
+            app.mods.truncate(23);
+            app.configs.truncate(20);
+            app.documentation.readme.additional_markdown = "## Gameplay\n\nBuild together, explore freely, and choose your own pace.\n\n- Casual progression\n- Shared construction\n".into();
+            for (size, scale) in [((640, 480), 1.0), ((980, 656), 1.5), ((1280, 720), 2.0)] {
+                let ctx = egui::Context::default();
+                crate::appearance::install_fonts(&ctx);
+                for changelog in [false, true] {
+                    app.readme_preview.show_changelog = changelog;
+                    let mut output = egui::FullOutput::default();
+                    for _ in 0..4 {
+                        output.append(document_frame(&mut app, &ctx, size, scale));
+                    }
+                    capture.save(
+                        &ctx,
+                        output,
+                        size,
+                        &root.join(format!(
+                            "{theme:?}-{}-{}x{}-{scale}-{}.png",
+                            language.code(),
+                            size.0,
+                            size.1,
+                            if changelog { "changelog" } else { "readme" }
+                        )),
+                    );
+                    if !changelog && size.0 == 1280 {
+                        let mut output = egui::FullOutput::default();
+                        for frame in 0..12 {
+                            let events = if frame == 0 {
+                                vec![
+                                    egui::Event::PointerMoved(egui::pos2(100.0, 500.0)),
+                                    egui::Event::MouseWheel {
+                                        unit: egui::MouseWheelUnit::Point,
+                                        delta: egui::vec2(0.0, -390.0),
+                                        phase: egui::TouchPhase::Move,
+                                        source: egui::MouseWheelSource::Unknown,
+                                        modifiers: egui::Modifiers::NONE,
+                                    },
+                                ]
+                            } else {
+                                Vec::new()
+                            };
+                            output.append(document_frame_with_events(
+                                &mut app, &ctx, size, scale, events,
+                            ));
+                        }
+                        capture.save(
+                            &ctx,
+                            output,
+                            size,
+                            &root.join(format!("{theme:?}-{}-table.png", language.code())),
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[test]

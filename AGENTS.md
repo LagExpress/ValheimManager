@@ -50,6 +50,8 @@ does not authorize renaming internal IDs or moving existing user settings.
 | English/Spanish labels | `src/i18n.rs`, plus localized helpers in `src/app/ui.rs` |
 | Profile discovery, YAML parsing, configuration classification | `src/profile.rs` |
 | Manifest, README, icon, streaming ZIP creation | `src/packager.rs` |
+| Package README options, editable changelog drafts, successful-build history | `src/package_docs.rs` |
+| Cached README/changelog preview and effective build version | `src/app/readme.rs` |
 | Staging, hashes, ignore matching, sync requests/events | `src/sync.rs` |
 | SSH host-key validation, SFTP operations, launcher repair | `src/sftp.rs` |
 | UI fixtures, responsive tests, optional visual/native tools | `src/app/ui/tests.rs` |
@@ -128,6 +130,20 @@ use the source's path helpers rather than hardcoding a developer's home director
   archive replacement. Errors must propagate; do not silently omit failed files
   or destroy the previous archive. Sensitive configurations and runtime caches
   remain excluded by default, with explicit selection available.
+- Generated README prose must not advertise Thunderstore, r2modman, or this app.
+  Keep actual package names/authors and canonical package URLs. Custom Markdown
+  appears before independently optional mod/config lists; hiding a list must not
+  change packaged dependencies or files. The preview and ZIP use one generator.
+- `modpacks.json` also saves README options, editable changelog drafts, and release
+  snapshots per configuration. Missing documentation fields in old presets default
+  safely. Record history only after ZIP success; preserve drafts on failure.
+  Changelog automation compares mod versions and mod/config selections, not bytes
+  inside config files. Same-version rebuilds replace one entry and retain manual
+  notes unless regeneration is explicitly requested. This package history is
+  independent of the application's root `CHANGELOG.md`.
+- Markdown preview parsing is cached; invalidate on content, selections, version,
+  context, theme, and scale changes. Image/network loaders are disabled. Do not
+  enable arbitrary image fetching or add a webview just to render package text.
 - Use temporary directories and synthetic data for tests. Do not overwrite real
   settings, mod profiles, staging files, or credentials during validation.
 
@@ -173,6 +189,9 @@ use the source's path helpers rather than hardcoding a developer's home director
 - The Sync page's outer scrollbar belongs at the window's right edge, outside
   centered content. Preview and activity logs have independent, fixed-width
   viewports. Do not let the preview viewport shrink to the longest visible path.
+- Sync starts with a full-width wrapping Actions toolbar, then collapsible ignore
+  settings, then the source/connection and inspection/summary/log panels. Ignore
+  settings default open on wide layouts and closed on compact layouts.
 - Long paths need truncation, full-path tooltips, and copy actions where used.
   Activity messages must wrap, including unbroken strings and explicit newlines.
 - Preserve virtualization and revision-keyed filter caches. During rendering, do
@@ -204,6 +223,7 @@ use the source's path helpers rather than hardcoding a developer's home director
 ```sh
 devenv shell -- cargo test export_visual_previews -- --ignored --nocapture
 devenv shell -- cargo test export_configuration_previews -- --ignored --nocapture
+devenv shell -- cargo test export_package_document_previews -- --ignored --nocapture
 devenv shell -- env VALHEIM_REQUIRE_NATIVE_BLUR=1 timeout 45s cargo test native_glass_probe -- --ignored --nocapture
 ```
 

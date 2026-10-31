@@ -102,6 +102,10 @@ impl ModpackApp {
                 ui.add(egui::Label::new(RichText::new(&message).small().color(color)).truncate())
                     .on_hover_text(message);
             });
+        if self.readme_preview.last_tab != Some(self.active_tab) {
+            self.readme_preview.dirty = true;
+            self.readme_preview.last_tab = Some(self.active_tab);
+        }
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new().inner_margin(if self.active_tab == ActiveTab::ServerSync {
@@ -704,6 +708,17 @@ impl ModpackApp {
                     .desired_rows(3)
                     .desired_width(f32::INFINITY),
             );
+            self.readme_options(ui);
+            if ui
+                .button(tr(
+                    language,
+                    "Preview package documents",
+                    "Vista previa de los documentos",
+                ))
+                .clicked()
+            {
+                self.active_tab = ActiveTab::Build;
+            }
             field(ui, self.language.label_website(), &mut self.pack_website);
             ui.label(RichText::new(self.language.label_icon()).small().strong());
             if let Some(icon) = &self.custom_icon_path {
@@ -726,6 +741,214 @@ impl ModpackApp {
                 }
             }
         });
+    }
+
+    fn readme_options(&mut self, ui: &mut Ui) {
+        let language = self.language;
+        ui.label(RichText::new(tr(language, "README content", "Contenido del README")).strong());
+        ui.checkbox(
+            &mut self.documentation.readme.include_mods,
+            tr(
+                language,
+                "Include the generated mod list",
+                "Incluir la lista de mods generada",
+            ),
+        );
+        ui.checkbox(
+            &mut self.documentation.readme.include_configs,
+            tr(
+                language,
+                "Include the generated configuration list",
+                "Incluir la lista de configuraciones generada",
+            ),
+        );
+        ui.label(RichText::new(tr(language,
+            "These options affect the description only. Selected dependencies and configuration files are still packaged.",
+            "Estas opciones solo afectan la descripción. Las dependencias y configuraciones seleccionadas se incluyen igualmente en el paquete.",
+        )).small().weak());
+        ui.label(tr(
+            language,
+            "Additional information (Markdown)",
+            "Información adicional (Markdown)",
+        ));
+        if ui
+            .add(
+                egui::TextEdit::multiline(&mut self.documentation.readme.additional_markdown)
+                    .desired_rows(5)
+                    .desired_width(f32::INFINITY)
+                    .code_editor(),
+            )
+            .changed()
+        {
+            self.readme_preview.dirty = true;
+        }
+        ui.label(RichText::new(tr(language,
+            "Inserted before the generated lists and saved with this modpack configuration.",
+            "Se inserta antes de las listas generadas y se guarda con la configuración del modpack.",
+        )).small().weak());
+    }
+
+    fn package_documents(&mut self, ui: &mut Ui) {
+        let language = self.language;
+        card(
+            ui,
+            tr(language, "Package documents", "Documentos del paquete"),
+            |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.selectable_value(
+                        &mut self.readme_preview.show_changelog,
+                        false,
+                        "README.md",
+                    );
+                    ui.selectable_value(
+                        &mut self.readme_preview.show_changelog,
+                        true,
+                        "CHANGELOG.md",
+                    );
+                });
+                self.refresh_readme_preview();
+                if self.readme_preview.show_changelog {
+                    ui.label(tr(
+                        language,
+                        "Release notes (Markdown)",
+                        "Notas de la versión (Markdown)",
+                    ));
+                    ui.label(RichText::new(tr(language,
+                    "Generated from mod versions and configuration selections since the previous successful release. Add details for changes inside configuration files.",
+                    "Se generan a partir de las versiones de mods y la selección de configuraciones desde la versión anterior creada correctamente. Añade detalles sobre cambios dentro de los archivos.",
+                )).small().weak());
+                    let changed = ui
+                        .add_enabled(
+                            !self.building,
+                            egui::TextEdit::multiline(&mut self.readme_preview.changelog_editor)
+                                .desired_rows(6)
+                                .desired_width(f32::INFINITY)
+                                .code_editor(),
+                        )
+                        .changed();
+                    if changed {
+                        self.documentation.changelog.draft =
+                            Some(crate::package_docs::ChangelogDraft {
+                                notes: self.readme_preview.changelog_editor.clone(),
+                                edited: true,
+                            });
+                        self.readme_preview.dirty = true;
+                    }
+                    if ui
+                        .add_enabled(
+                            !self.building,
+                            egui::Button::new(tr(
+                                language,
+                                "Regenerate current release notes",
+                                "Regenerar las notas de esta versión",
+                            )),
+                        )
+                        .clicked()
+                    {
+                        self.documentation.changelog.draft =
+                            Some(crate::package_docs::ChangelogDraft::default());
+                        self.readme_preview.dirty = true;
+                    }
+                } else {
+                    egui::CollapsingHeader::new(tr(
+                        language,
+                        "Edit README content",
+                        "Editar contenido del README",
+                    ))
+                    .id_salt("readme_content_options")
+                    .show(ui, |ui| {
+                        ui.add_enabled_ui(!self.building, |ui| self.readme_options(ui));
+                    });
+                }
+                self.refresh_readme_preview();
+                if let Some(release) = &self.readme_preview.release {
+                    ui.label(
+                        RichText::new(tr(
+                            language,
+                            "Preview for build version",
+                            "Vista previa para la versión",
+                        ))
+                        .small()
+                        .weak(),
+                    );
+                    ui.label(RichText::new(&release.version).monospace());
+                }
+                ui.horizontal_wrapped(|ui| {
+                    ui.selectable_value(
+                        &mut self.readme_preview.source_view,
+                        false,
+                        tr(language, "Rendered preview", "Vista previa formateada"),
+                    );
+                    ui.selectable_value(&mut self.readme_preview.source_view, true, "Markdown");
+                    if ui
+                        .button(tr(language, "Copy Markdown", "Copiar Markdown"))
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(if self.readme_preview.show_changelog {
+                            self.readme_preview.changelog_markdown.clone()
+                        } else {
+                            self.readme_preview.markdown.clone()
+                        });
+                    }
+                });
+                let id = egui::Id::unique("package_document_preview")
+                    .with(self.readme_preview.show_changelog);
+                let style_key = (self.theme, ui.ctx().pixels_per_point().to_bits());
+                if self.readme_preview.context.as_ref() != Some(ui.ctx())
+                    || self.readme_preview.style_key != Some(style_key)
+                {
+                    self.readme_preview.renderer = egui_commonmark::CommonMarkCache::default();
+                    self.readme_preview.context = Some(ui.ctx().clone());
+                    self.readme_preview.style_key = Some(style_key);
+                }
+                let markdown = if self.readme_preview.show_changelog {
+                    &self.readme_preview.changelog_markdown
+                } else {
+                    &self.readme_preview.markdown
+                };
+                let height = (ui.ctx().content_rect().height() * 0.55).clamp(220.0, 520.0);
+                let viewport_size = egui::vec2(ui.available_width(), height);
+                if !ui.is_rect_visible(egui::Rect::from_min_size(
+                    ui.next_widget_position(),
+                    viewport_size,
+                )) {
+                    ui.allocate_space(viewport_size);
+                    return;
+                }
+                if self.readme_preview.source_view {
+                    egui::ScrollArea::both()
+                        .id_salt(id.with("source"))
+                        .max_height(height)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            let mut source = markdown.as_str();
+                            ui.add(
+                                egui::TextEdit::multiline(&mut source)
+                                    .code_editor()
+                                    .lock_focus(false)
+                                    .desired_width(f32::INFINITY),
+                            );
+                        });
+                } else {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), height),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            egui_commonmark::CommonMarkViewer::new()
+                                .explicit_image_uri_scheme(true)
+                                .show_scrollable(
+                                    id,
+                                    ui,
+                                    &mut self.readme_preview.renderer,
+                                    &egui_commonmark::CommonMarkScrollOptions::default()
+                                        .viewport_cache(true),
+                                    markdown,
+                                );
+                        },
+                    );
+                }
+            },
+        );
     }
 
     fn update_mod_filter(&mut self) {
@@ -1193,6 +1416,7 @@ impl ModpackApp {
                 if let Some((fraction,message))=&self.build_progress{ui.add(egui::ProgressBar::new(*fraction).text(message).show_percentage());}
                 if ui.add_enabled(!self.building,egui::Button::new(RichText::new(self.language.btn_build_main()).color(p.on_accent).strong()).fill(p.accent)).clicked(){self.trigger_build(ui.ctx());}
             });
+            self.package_documents(ui);
             if let Some(result)=&self.last_build_result{
                 let archive=result.zip_path.display().to_string();let unpacked=result.build_dir.display().to_string();let size=result.zip_size_bytes;
                 card(ui,tr(language,"Build complete","Paquete creado"),|ui|{

@@ -31,7 +31,8 @@ Runs natively on **Linux** (as a standalone binary and **AppImage**) and **Windo
   - Categorization badges: `SAFE`, `SENSITIVE`, and `CACHE`.
 - **🏷️ Thunderstore Modpack Compliant**:
   - Generates valid `manifest.json` with dependency array.
-  - Auto-generates markdown `README.md` with a clean table of mods, versions, and installation instructions.
+  - Previews `README.md` as formatted Markdown or source, with custom information before independently optional mod and configuration lists.
+  - Includes an editable `CHANGELOG.md`, generated from mod version and selection changes since the previous successful build.
   - Generates/embeds a compliant 256×256 `icon.png` (or accepts a custom image).
   - Packs into a clean `.zip` in `dist/<Name>-<Version>.zip`.
 - **🚀 Build & Open**: Build the archive and open its containing output folder directly from the GUI.
@@ -49,6 +50,29 @@ Runs natively on **Linux** (as a standalone binary and **AppImage**) and **Windo
 Builds also save the current configuration automatically. Only a successful build commits an incremented version. Installed mod updates are picked up when reloading a profile; explicit dependency version overrides remain pinned.
 
 Presets are stored in `modpacks.json` beside `appearance.json` and `sync.json`; they do not include server credentials. An unreadable saved-configuration file is reported rather than overwritten.
+
+### Package description and changelog
+
+On **Profile & Info**, choose whether the README should include the generated mod
+and configuration lists, and enter any additional Markdown. These switches affect
+the description only; selected dependencies and configuration files remain in the
+package. Generated prose contains no application or store branding; package links
+still point to their download pages.
+
+On **Build & Export → Package documents**, preview `README.md` or `CHANGELOG.md`,
+switch between formatted output and Markdown source, or copy the generated text.
+The preview displays its build version, including the next patch when automatic
+incrementing is enabled. Choosing a different version in the build dialog updates
+the documents for that build.
+
+Changelog notes compare mod versions and selected mods/configuration entries with
+the previous successful version. Edit the current notes to describe gameplay fixes
+or changes inside configuration files; file contents are not compared
+automatically. **Regenerate current release notes** replaces the current draft
+with generated notes. Earlier versions remain in the exported changelog. Rebuilding
+the same version updates that entry without duplicating it. Notes, README options,
+and history are saved per modpack; failed builds retain the draft and do not advance
+release history.
 
 ## 🔄 Server Sync
 
@@ -104,16 +128,16 @@ To build an AppImage for x86-64 Linux desktops, including NixOS:
 devenv shell -- appimage
 
 # Output is generated at:
-dist/ValheimManager-0.1.7.AppImage
+dist/ValheimManager-0.1.9.AppImage
 ```
 
 Run the AppImage:
 ```bash
-./dist/ValheimManager-0.1.7.AppImage
+./dist/ValheimManager-0.1.9.AppImage
 ```
 
 If FUSE mounting is unavailable, use
-`./dist/ValheimManager-0.1.7.AppImage --appimage-extract-and-run`.
+`./dist/ValheimManager-0.1.9.AppImage --appimage-extract-and-run`.
 
 CI and local builds use the same packager. It bundles the ELF loader, glibc, and
 the Wayland/X11/OpenGL/Vulkan client libraries with their dependencies, keyboard
@@ -127,8 +151,8 @@ All project build and validation tools are declared in `devenv.nix`. Check a
 packaged runtime or open it on an isolated headless test display with:
 
 ```bash
-devenv shell -- bash scripts/check-appimage.sh dist/ValheimManager-0.1.7.AppImage
-devenv shell -- bash scripts/smoke-appimage.sh dist/ValheimManager-0.1.7.AppImage
+devenv shell -- bash scripts/check-appimage.sh dist/ValheimManager-0.1.9.AppImage
+devenv shell -- bash scripts/smoke-appimage.sh dist/ValheimManager-0.1.9.AppImage
 ```
 
 The smoke test uses temporary settings and home directories and never connects
@@ -150,15 +174,15 @@ scripts\build-windows.bat
 
 The output binary will be created at:
 ```text
-dist\ValheimManager-0.1.7.exe
+dist\ValheimManager-0.1.9.exe
 ```
 
 #### Option B: Automated GitHub Actions CI/CD
 This repository includes a ready-to-use GitHub Actions workflow at [`.github/workflows/release.yml`](.github/workflows/release.yml):
 - Pushes to `main`, pull requests to `main`, and version tags run quality checks and build both:
-  - `ValheimManager-0.1.7.AppImage` (Linux)
-  - `ValheimManager-0.1.7.exe` (Windows)
-- Builds are uploaded to GitHub Actions artifacts. A tag matching the Cargo version (for example `v0.1.7`) also publishes a GitHub release containing the EXE, AppImage, and SHA-256 checksums. Source is available through GitHub's built-in Source code (zip) and Source code (tar.gz) downloads for the tag; CI does not upload duplicate source archives.
+  - `ValheimManager-0.1.9.AppImage` (Linux)
+  - `ValheimManager-0.1.9.exe` (Windows)
+- Builds are uploaded to GitHub Actions artifacts. A tag matching the Cargo version (for example `v0.1.9`) also publishes a GitHub release containing the EXE, AppImage, and SHA-256 checksums. Source is available through GitHub's built-in Source code (zip) and Source code (tar.gz) downloads for the tag; CI does not upload duplicate source archives.
 - Release descriptions come from [CHANGELOG.md](CHANGELOG.md). Before tagging a version, add its entry under `## [<version>] - YYYY-MM-DD`, using Added, Changed, Fixed, Removed, or Security sections as needed. CI rejects a version without a nonempty changelog entry and publishes that entry as the release description.
 
 ---
@@ -177,6 +201,8 @@ The shared appearance tokens, reusable UI components, and native effect adapter 
 │   ├── appearance.rs               # Theme palettes, bundled font, preferences
 │   ├── modpack_config.rs           # Saved modpack library and checked version increments
 │   ├── app/saved.rs                # Preset restoration and build-version lifecycle
+│   ├── app/readme.rs               # Cached package-document previews
+│   ├── package_docs.rs             # README choices and editable package changelog history
 │   ├── ui_components.rs            # Shared cards, forms, icons, and backdrop
 │   ├── platform_effects.rs         # Optional Wayland and Windows effects
 │   ├── profile.rs                  # r2modman scanner (mods.yml & BepInEx/config)

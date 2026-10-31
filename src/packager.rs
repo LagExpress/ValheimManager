@@ -9,7 +9,8 @@ use zip::ZipWriter;
 
 type ProgressCallback<'a> = dyn Fn(f32, &str) + 'a;
 
-use crate::profile::{ConfigCategory, ConfigItem, ModItem};
+use crate::package_docs::{PackageDocumentation, PackageSnapshot, ReadmeOptions, ReleaseEntry};
+use crate::profile::{ConfigItem, ModItem};
 
 pub const EMBEDDED_ICON: &[u8] = include_bytes!("assets/icon.png");
 
@@ -27,6 +28,7 @@ pub struct ModpackOptions {
     pub name: String,
     pub version: String,
     pub description: String,
+    pub documentation: PackageDocumentation,
     pub website_url: String,
     pub selected_mods: Vec<ModItem>,
     pub selected_configs: Vec<ConfigItem>,
@@ -42,81 +44,150 @@ pub struct BuildResult {
     pub mod_count: usize,
     pub config_count: usize,
     pub zip_size_bytes: u64,
+    pub release: Box<ReleaseEntry>,
 }
 
-pub fn generate_readme(
+pub fn clean_package_name(name: &str) -> String {
+    name.trim()
+        .replace(|c: char| !c.is_alphanumeric() && c != '_', "_")
+}
+
+pub(crate) fn package_description(description: &str) -> &str {
+    if description.trim().is_empty() {
+        "Modpack with custom configurations"
+    } else {
+        description.trim()
+    }
+}
+
+pub(crate) fn markdown_text(text: &str) -> String {
+    let mut escaped = String::new();
+    for c in text.chars() {
+        match c {
+            '\r' | '\n' => escaped.push(' '),
+            '\\' | '|' | '*' | '_' | '[' | ']' | '<' | '>' => {
+                escaped.push('\\');
+                escaped.push(c);
+            }
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
+pub(crate) fn inline_code(text: &str) -> String {
+    let text = text.replace(['\r', '\n'], " ");
+    let delimiter = "`".repeat(text.split(|c| c != '`').map(str::len).max().unwrap_or(0) + 1);
+    if text.contains('`') || text.starts_with(' ') || text.ends_with(' ') {
+        format!("{delimiter} {text} {delimiter}")
+    } else {
+        format!("{delimiter}{text}{delimiter}")
+    }
+}
+
+fn url_segment(text: &str) -> String {
+    text.bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.') {
+                (byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
+}
+
+fn thunderstore_url(item: &ModItem) -> String {
+    let package = item
+        .name
+        .split_once('-')
+        .or_else(|| {
+            (!item.author_name.trim().is_empty())
+                .then_some((item.author_name.trim(), item.name.as_str()))
+        })
+        .or_else(|| {
+            let path = item
+                .website_url
+                .strip_prefix("https://thunderstore.io/c/valheim/p/")
+                .or_else(|| {
+                    item.website_url
+                        .strip_prefix("https://valheim.thunderstore.io/package/")
+                })?;
+            let mut parts = path.split('/');
+            Some((parts.next()?, parts.next()?))
+        });
+    match package {
+        Some((namespace, name)) => format!(
+            "https://thunderstore.io/c/valheim/p/{}/{}/",
+            url_segment(namespace),
+            url_segment(name)
+        ),
+        None => format!(
+            "https://thunderstore.io/c/valheim/?q={}",
+            url_segment(&item.name)
+        ),
+    }
+}
+
+pub fn generate_readme<'a>(
     name: &str,
     version: &str,
     description: &str,
-    mods: &[ModItem],
-    configs: &[ConfigItem],
+    options: &ReadmeOptions,
+    mods: impl Iterator<Item = &'a ModItem> + Clone,
+    configs: impl Iterator<Item = &'a ConfigItem> + Clone,
 ) -> String {
     let mut readme = String::new();
-    readme.push_str(&format!("# {}\n\n", name));
-    readme.push_str(&format!("> {}\n\n", description));
-    readme.push_str(&format!("**Version:** `{}`  \n", version));
-    readme.push_str("**Powered by:** Valheim r2modman / Thunderstore\n\n---\n\n");
+    readme.push_str(&format!("# {}\n\n", clean_package_name(name)));
+    for line in package_description(description).lines() {
+        readme.push_str(&format!("> {line}\n"));
+    }
+    readme.push_str(&format!("\n**Version:** {}\n", inline_code(version.trim())));
+    if !options.additional_markdown.trim().is_empty()
+        || options.include_mods
+        || options.include_configs
+    {
+        readme.push_str("\n---\n\n");
+    }
+    if !options.additional_markdown.trim().is_empty() {
+        readme.push_str(options.additional_markdown.trim_matches(['\r', '\n']));
+        readme.push_str("\n\n");
+    }
 
-    readme.push_str(&format!("## 📦 Included Mods ({})\n\n", mods.len()));
-    readme.push_str("| Mod | Author | Version | Thunderstore Package |\n");
-    readme.push_str("| --- | --- | --- | --- |\n");
-    for m in mods {
-        let url = if m.website_url.is_empty() {
-            format!("https://thunderstore.io/c/valheim/p/{}/", m.name)
-        } else {
-            m.website_url.clone()
-        };
+    if options.include_mods {
         readme.push_str(&format!(
-            "| **{}** | {} | `{}` | [`{}`]({}) |\n",
-            m.display_name,
-            if m.author_name.is_empty() {
-                "-"
-            } else {
-                &m.author_name
-            },
-            m.current_version,
-            m.name,
-            url
+            "## 📦 Included Mods ({})\n\n",
+            mods.clone().count()
         ));
+        readme.push_str("| Mod | Author | Version | Package |\n");
+        readme.push_str("| --- | --- | --- | --- |\n");
+        for m in mods {
+            readme.push_str(&format!(
+                "| **{}** | {} | {} | [{}]({}) |\n",
+                markdown_text(&m.display_name),
+                markdown_text(if m.author_name.is_empty() {
+                    "-"
+                } else {
+                    &m.author_name
+                }),
+                inline_code(m.current_version.trim()).replace('|', "\\|"),
+                inline_code(&m.name).replace('|', "\\|"),
+                thunderstore_url(m)
+            ));
+        }
     }
-
-    readme.push_str("\n---\n\n");
-    readme.push_str(&format!(
-        "## ⚙️ Included Configurations ({})\n\n",
-        configs.len()
-    ));
-    readme.push_str("This modpack includes curated, pre-tuned configuration files for optimal stability and gameplay:\n");
-    for c in configs {
-        readme.push_str(&format!("- `{}`\n", c.name));
+    if options.include_configs {
+        if options.include_mods {
+            readme.push_str("\n---\n\n");
+        }
+        readme.push_str(&format!(
+            "## ⚙️ Included Configurations ({})\n\n",
+            configs.clone().count()
+        ));
+        for c in configs {
+            readme.push_str(&format!("- {}\n", inline_code(&c.name)));
+        }
     }
-    let includes_sensitive = configs
-        .iter()
-        .any(|item| item.category == ConfigCategory::Sensitive);
-    let includes_cache = configs
-        .iter()
-        .any(|item| item.category == ConfigCategory::Cache);
-    readme.push_str(
-        "\n> **Review before sharing:** The selected configuration files are included as listed. ",
-    );
-    if includes_sensitive {
-        readme.push_str("Sensitive configuration files were selected. ");
-    }
-    if includes_cache {
-        readme.push_str("Runtime cache or report files were selected. ");
-    }
-    readme.push_str("Check the generated config folder for private data.\n\n");
-
-    readme.push_str("---\n\n## 🚀 Installation\n\n");
-    readme.push_str("### Via r2modman / Thunderstore Mod Manager (Recommended)\n");
-    readme.push_str("1. Open **r2modman** (or Thunderstore Mod Manager).\n");
-    readme.push_str("2. Select **Valheim**.\n");
-    readme.push_str("3. Create or select a profile.\n");
-    readme.push_str(&format!(
-        "4. Go to **Online**, search for **{}**, and click **Download with dependencies**.\n",
-        name
-    ));
-    readme.push_str("5. All required mods and tailored configuration settings will be applied automatically!\n\n");
-    readme.push_str("---\n*Generated with Valheim Modpack Studio.*\n");
 
     readme
 }
@@ -125,10 +196,7 @@ pub fn build_modpack(
     opts: &ModpackOptions,
     on_progress: Option<&ProgressCallback<'_>>,
 ) -> Result<BuildResult, String> {
-    let clean_name = opts
-        .name
-        .trim()
-        .replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
+    let clean_name = clean_package_name(&opts.name);
     if clean_name.is_empty() {
         return Err("Modpack name cannot be empty".to_string());
     }
@@ -175,11 +243,7 @@ pub fn build_modpack(
         name: clean_name.clone(),
         version_number: version.to_string(),
         website_url: opts.website_url.trim().to_string(),
-        description: if opts.description.trim().is_empty() {
-            "Valheim modpack with custom configurations".to_string()
-        } else {
-            opts.description.trim().to_string()
-        },
+        description: package_description(&opts.description).to_string(),
         dependencies: opts
             .selected_mods
             .iter()
@@ -194,14 +258,15 @@ pub fn build_modpack(
 
     // 2. Write README.md
     if let Some(cb) = on_progress {
-        cb(0.12, "Generating README.md with mod list...");
+        cb(0.12, "Generating package documentation...");
     }
     let readme_content = generate_readme(
         &clean_name,
         opts.version.trim(),
         &manifest.description,
-        &opts.selected_mods,
-        &opts.selected_configs,
+        &opts.documentation.readme,
+        opts.selected_mods.iter(),
+        opts.selected_configs.iter(),
     );
     fs::write(build_folder.join("README.md"), readme_content)
         .map_err(|e| format!("Failed to write README.md: {}", e))?;
@@ -269,6 +334,20 @@ pub fn build_modpack(
         }
     }
 
+    let snapshot = PackageSnapshot::new(
+        &clean_name,
+        &manifest.description,
+        &opts.documentation.readme,
+        opts.selected_mods.iter(),
+        opts.selected_configs.iter(),
+    );
+    let release = opts.documentation.changelog.release(version, snapshot);
+    fs::write(
+        build_folder.join("CHANGELOG.md"),
+        opts.documentation.changelog.document(&release),
+    )
+    .map_err(|error| format!("Failed to write CHANGELOG.md: {error}"))?;
+
     // 5. Create ZIP archive with pure Rust `zip` crate
     if let Some(cb) = on_progress {
         cb(0.60, "Creating ZIP archive...");
@@ -289,6 +368,7 @@ pub fn build_modpack(
         mod_count: opts.selected_mods.len(),
         config_count: opts.selected_configs.len(),
         zip_size_bytes,
+        release: Box::new(release),
     })
 }
 
@@ -529,7 +609,153 @@ fn zip_entry_name(path: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::profile::ConfigCategory;
     use std::io::Read;
+
+    fn package_items() -> (Vec<ModItem>, Vec<ConfigItem>) {
+        (
+            vec![ModItem {
+                name: "Team-Journey".into(),
+                author_name: "Team".into(),
+                display_name: "Journey".into(),
+                description: String::new(),
+                website_url: "https://example.com/mod-source".into(),
+                enabled: true,
+                original_version: "1.2.0".into(),
+                current_version: "1.2.3".into(),
+                selected: true,
+            }],
+            vec![ConfigItem {
+                name: "journey.cfg".into(),
+                path: PathBuf::new(),
+                is_dir: false,
+                category: ConfigCategory::Safe,
+                size: 0,
+                selected: true,
+            }],
+        )
+    }
+
+    #[test]
+    fn readme_matches_the_requested_structure_and_has_no_generated_branding() {
+        let (mods, configs) = package_items();
+        let options = ReadmeOptions {
+            additional_markdown: "## Gameplay\n\nBuild together.  \nExplore freely.\n".into(),
+            ..Default::default()
+        };
+        let text = generate_readme(
+            " North Casual ",
+            "1.0.1",
+            "A casual adventure",
+            &options,
+            mods.iter(),
+            configs.iter(),
+        );
+        assert!(text.starts_with(
+            "# North_Casual\n\n> A casual adventure\n\n**Version:** `1.0.1`\n\n---\n\n## Gameplay"
+        ));
+        assert!(text.contains("Build together.  \nExplore freely.\n\n## 📦 Included Mods (1)"));
+        assert!(text.contains("| **Journey** | Team | `1.2.3` | [`Team-Journey`](https://thunderstore.io/c/valheim/p/Team/Journey/) |"));
+        assert!(text.ends_with("## ⚙️ Included Configurations (1)\n\n- `journey.cfg`\n"));
+        for forbidden in [
+            "Thunderstore",
+            "r2modman",
+            "ValheimManager",
+            "Valheim Modpack Studio",
+            "Installation",
+            "Generated by",
+            "Powered by",
+        ] {
+            assert!(!text.contains(forbidden), "{forbidden}");
+        }
+    }
+
+    #[test]
+    fn readme_lists_are_independently_optional_and_escape_package_fields() {
+        let (mut mods, mut configs) = package_items();
+        mods[0].display_name = "A|B*[test]".into();
+        configs[0].name = "a`b.cfg".into();
+        for include_mods in [false, true] {
+            for include_configs in [false, true] {
+                let options = ReadmeOptions {
+                    include_mods,
+                    include_configs,
+                    ..Default::default()
+                };
+                let text =
+                    generate_readme("North", "1.0.0", "", &options, mods.iter(), configs.iter());
+                assert_eq!(text.contains("Included Mods"), include_mods);
+                assert_eq!(text.contains("Included Configurations"), include_configs);
+                if include_mods {
+                    assert!(text.contains(r"**A\|B\*\[test\]**"));
+                }
+                if include_configs {
+                    assert!(text.contains("- `` a`b.cfg ``"));
+                }
+                if !include_mods && !include_configs {
+                    assert!(!text.contains("---"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hidden_readme_lists_do_not_remove_dependencies_or_config_files_from_the_zip() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mods, mut configs) = package_items();
+        configs[0].path = directory.path().join("journey.cfg");
+        fs::write(&configs[0].path, "enabled=true").unwrap();
+        let options = ModpackOptions {
+            name: "North".into(),
+            version: "1.0.0".into(),
+            description: "Explore".into(),
+            website_url: String::new(),
+            custom_icon: None,
+            selected_mods: mods,
+            selected_configs: configs,
+            documentation: PackageDocumentation {
+                readme: ReadmeOptions {
+                    include_mods: false,
+                    include_configs: false,
+                    additional_markdown: "## Custom guide\n\nHave fun.".into(),
+                },
+                ..Default::default()
+            },
+            out_dir: directory.path().join("build"),
+            dist_dir: directory.path().join("dist"),
+        };
+        let result = build_modpack(&options, None).unwrap();
+        let mut archive = zip::ZipArchive::new(File::open(&result.zip_path).unwrap()).unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_reader(archive.by_name("manifest.json").unwrap()).unwrap();
+        assert_eq!(manifest["dependencies"][0], "Team-Journey-1.2.3");
+        for (file, expected) in [
+            (
+                "README.md",
+                generate_readme(
+                    "North",
+                    "1.0.0",
+                    "Explore",
+                    &options.documentation.readme,
+                    options.selected_mods.iter(),
+                    options.selected_configs.iter(),
+                ),
+            ),
+            (
+                "CHANGELOG.md",
+                options.documentation.changelog.document(&result.release),
+            ),
+            ("config/journey.cfg", "enabled=true".into()),
+        ] {
+            let mut text = String::new();
+            archive
+                .by_name(file)
+                .unwrap()
+                .read_to_string(&mut text)
+                .unwrap();
+            assert_eq!(text, expected, "{file}");
+        }
+    }
 
     #[test]
     fn archive_upgrade_preserves_contents_and_existing_output_on_failure() {

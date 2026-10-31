@@ -17,6 +17,8 @@ pub struct ModpackConfiguration {
     pub name: String,
     pub version: String,
     pub description: String,
+    #[serde(default)]
+    pub documentation: crate::package_docs::PackageDocumentation,
     pub website: String,
     pub custom_icon: Option<PathBuf>,
     pub output_dir: PathBuf,

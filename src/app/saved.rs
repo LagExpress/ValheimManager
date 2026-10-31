@@ -38,6 +38,7 @@ impl ModpackApp {
             name: self.pack_name.trim().to_owned(),
             version: self.pack_version.trim().to_owned(),
             description: self.pack_description.clone(),
+            documentation: self.documentation.clone(),
             website: self.pack_website.clone(),
             custom_icon: self.custom_icon_path.clone(),
             output_dir: self.output_dir.clone(),
@@ -140,6 +141,8 @@ impl ModpackApp {
         self.pack_name = configuration.name.clone();
         self.pack_version = configuration.version.clone();
         self.pack_description = configuration.description.clone();
+        self.documentation = configuration.documentation.clone();
+        self.readme_preview.dirty = true;
         self.pack_website = configuration.website.clone();
         self.custom_icon_path = configuration.custom_icon.clone();
         self.output_dir = configuration.output_dir.clone();
@@ -230,16 +233,19 @@ impl ModpackApp {
         }
     }
 
-    pub(super) fn finish_build_version(&mut self, success: bool) -> Result<(), String> {
+    pub(super) fn finish_build_version(
+        &mut self,
+        result: Option<&BuildResult>,
+    ) -> Result<(), String> {
         let Some(attempt) = self.build_attempt.take() else {
             return Ok(());
         };
-        if !success {
+        let Some(result) = result else {
             if self.pack_version == attempt.version {
                 self.pack_version = attempt.previous_version;
             }
             return Ok(());
-        }
+        };
         let mut library = self.modpack_library.clone();
         let configuration = library
             .configurations
@@ -247,8 +253,15 @@ impl ModpackApp {
             .find(|c| c.id == attempt.configuration_id)
             .ok_or("Built configuration not found")?;
         configuration.version = attempt.version;
+        configuration
+            .documentation
+            .changelog
+            .record((*result.release).clone());
+        let changelog = configuration.documentation.changelog.clone();
         library.save(&self.modpack_library_path)?;
         self.modpack_library = library;
+        self.documentation.changelog = changelog;
+        self.readme_preview.dirty = true;
         Ok(())
     }
 }

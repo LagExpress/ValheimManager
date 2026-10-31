@@ -2,6 +2,7 @@ mod app;
 mod appearance;
 mod i18n;
 mod modpack_config;
+mod package_docs;
 mod packager;
 mod platform_effects;
 mod profile;

@@ -4,6 +4,19 @@ Release notes describe changes introduced in each version. Use Added, Changed,
 Fixed, Removed, and Security sections where applicable. Keep entries focused on
 user-visible behavior; omit build reports, test counts, and development history.
 
+## [0.1.9] - 2026-10-30
+
+### Added
+
+- Formatted and Markdown-source previews of package README and changelog documents, with a copy action.
+- Saved custom Markdown before the generated lists, with separate switches for including mod and configuration lists in descriptions.
+- Editable package changelogs generated from mod version and selection changes, with history saved after successful builds.
+
+### Changed
+
+- Simplified generated descriptions to package information and optional lists, without application branding or installation boilerplate.
+- Used canonical package-page links and a neutral Package column in generated mod tables.
+
 ## [0.1.8] - 2026-10-30
 
 ### Changed

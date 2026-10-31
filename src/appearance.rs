@@ -269,7 +269,7 @@ mod tests {
         let output = ctx.run_ui(egui::RawInput::default(), |ui| {
             ui.fonts_mut(|fonts| {
                 let font = FontId::proportional(15.0);
-                for source in [include_str!("i18n.rs"), include_str!("app/ui.rs")] {
+                for source in [include_str!("i18n.rs"), include_str!("app/ui.rs"), "📦⚙"] {
                     for character in source.chars().filter(|c| !c.is_ascii()) {
                         assert!(
                             fonts.has_glyph(&font, character),
