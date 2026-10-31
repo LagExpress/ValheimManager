@@ -149,6 +149,11 @@ use the source's path helpers rather than hardcoding a developer's home director
 
 ## Server sync and hosting compatibility
 
+- Named server profiles live inside `sync.json`, retaining its owner-only
+  permissions and legacy single-server fields. Profile snapshots must not contain
+  nested profile libraries. Switching is disabled during operations and clears
+  preview/summary/log state, reloads staging ignore rules, and hides passwords.
+
 - `SyncConfig.manage_bepinex_launcher` defaults to **false**, including when
   loading older settings. This supports hosts that already supply BepInEx or
   forbid executable modification.

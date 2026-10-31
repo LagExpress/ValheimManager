@@ -1489,6 +1489,89 @@ impl ModpackApp {
     fn sync_connection(&mut self, ui: &mut Ui) {
         let language = self.language;
         card(ui, self.language.heading_connection(), |ui| {
+            ui.add_enabled_ui(!self.sync.running, |ui| {
+                let mut selected = self.sync.config.active_server;
+                egui::ComboBox::from_id_salt("saved_servers")
+                    .selected_text(&self.sync.config.server_name)
+                    .show_ui(ui, |ui| {
+                        for server in &self.sync.config.servers {
+                            ui.selectable_value(
+                                &mut selected,
+                                Some(server.id),
+                                &server.config.server_name,
+                            );
+                        }
+                    });
+                let mut changed = false;
+                if selected != self.sync.config.active_server {
+                    if let Some(id) = selected {
+                        match self.sync.config.select_server(id) {
+                            Ok(()) => changed = true,
+                            Err(e) => self.sync_error(e),
+                        }
+                    }
+                }
+                field(
+                    ui,
+                    tr(language, "Server name", "Nombre del servidor"),
+                    &mut self.sync.config.server_name,
+                );
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .button(tr(language, "Save server", "Guardar servidor"))
+                        .clicked()
+                    {
+                        match self.sync.config.remember_server() {
+                            Ok(()) => self.persist_server_settings(),
+                            Err(e) => self.sync_error(e),
+                        }
+                    }
+                    if ui
+                        .button(tr(language, "New server", "Nuevo servidor"))
+                        .clicked()
+                    {
+                        match self.sync.config.remember_server() {
+                            Ok(()) => {
+                                let servers = std::mem::take(&mut self.sync.config.servers);
+                                self.sync.config = SyncConfig {
+                                    servers,
+                                    language: Some(language),
+                                    ..Default::default()
+                                };
+                                changed = true;
+                            }
+                            Err(e) => self.sync_error(e),
+                        }
+                    }
+                    if ui
+                        .add_enabled(
+                            self.sync.config.active_server.is_some(),
+                            egui::Button::new(tr(language, "Remove server", "Eliminar servidor")),
+                        )
+                        .clicked()
+                    {
+                        let id = self.sync.config.active_server.take();
+                        self.sync.config.servers.retain(|s| Some(s.id) != id);
+                        let servers = std::mem::take(&mut self.sync.config.servers);
+                        self.sync.config = SyncConfig {
+                            servers,
+                            language: Some(language),
+                            ..Default::default()
+                        };
+                        changed = true;
+                    }
+                });
+                if changed {
+                    self.sync.preview = None;
+                    self.sync.preview_revision = self.sync.preview_revision.wrapping_add(1);
+                    self.sync.summary = None;
+                    self.sync.logs.clear();
+                    self.sync.logs_revision = self.sync.logs_revision.wrapping_add(1);
+                    self.sync.show_password = false;
+                    self.sync.reload_ignore();
+                    self.persist_server_settings();
+                }
+            });
             field(ui, self.language.label_host(), &mut self.sync.config.host);
             ui.label(RichText::new(self.language.label_port()).small().strong());
             ui.add_sized(
@@ -1601,6 +1684,23 @@ impl ModpackApp {
                     self.sync_error(error);
                 }
             }
+        }
+    }
+
+    fn persist_server_settings(&mut self) {
+        match self.sync.config.save() {
+            Ok(()) => {
+                self.status_message = Some((
+                    tr(
+                        self.language,
+                        "Server profiles saved.",
+                        "Servidores guardados.",
+                    )
+                    .into(),
+                    false,
+                ))
+            }
+            Err(error) => self.sync_error(error),
         }
     }
 
@@ -1826,7 +1926,7 @@ impl ModpackApp {
             }
             egui::ScrollArea::vertical()
                 .id_salt("preview_rows")
-                .max_height(220.0)
+                .max_height(480.0)
                 .auto_shrink([false, true])
                 .show_rows(ui, 30.0, self.preview_filter.indices.len(), |ui, rows| {
                     for row in rows {
@@ -1982,7 +2082,7 @@ impl ModpackApp {
             }
             egui::ScrollArea::vertical()
                 .id_salt("log_rows")
-                .max_height(260.0)
+                .max_height(520.0)
                 .auto_shrink([false, true])
                 .stick_to_bottom(self.sync.log_autoscroll)
                 .show_viewport(ui, |ui, viewport| {

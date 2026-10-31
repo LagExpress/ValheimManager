@@ -30,6 +30,9 @@ pub const DEFAULT_IGNORED_PATTERNS: &[&str] = &[
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SyncConfig {
+    pub servers: Vec<SavedServer>,
+    pub active_server: Option<u64>,
+    pub server_name: String,
     pub host: String,
     pub port: u16,
     pub username: String,
@@ -42,9 +45,18 @@ pub struct SyncConfig {
     pub language: Option<crate::i18n::Language>,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SavedServer {
+    pub id: u64,
+    pub config: Box<SyncConfig>,
+}
+
 impl Default for SyncConfig {
     fn default() -> Self {
         Self {
+            servers: Vec::new(),
+            active_server: None,
+            server_name: "Server".into(),
             host: String::new(),
             port: 22,
             username: String::new(),
@@ -59,6 +71,45 @@ impl Default for SyncConfig {
 }
 
 impl SyncConfig {
+    pub fn remember_server(&mut self) -> Result<(), String> {
+        let id = match self.active_server {
+            Some(id) => id,
+            None => self
+                .servers
+                .iter()
+                .map(|s| s.id)
+                .max()
+                .unwrap_or(0)
+                .checked_add(1)
+                .ok_or("Server ID limit reached")?,
+        };
+        self.active_server = Some(id);
+        let mut snapshot = self.clone();
+        snapshot.servers.clear();
+        snapshot.active_server = None;
+        if let Some(server) = self.servers.iter_mut().find(|s| s.id == id) {
+            *server.config = snapshot;
+        } else {
+            self.servers.push(SavedServer {
+                id,
+                config: Box::new(snapshot),
+            });
+        }
+        Ok(())
+    }
+
+    pub fn select_server(&mut self, id: u64) -> Result<(), String> {
+        if !self.servers.iter().any(|s| s.id == id) {
+            return Err("Server not found".into());
+        }
+        self.remember_server()?;
+        let mut selected = (*self.servers.iter().find(|s| s.id == id).unwrap().config).clone();
+        selected.servers = std::mem::take(&mut self.servers);
+        selected.active_server = Some(id);
+        selected.language = self.language;
+        *self = selected;
+        Ok(())
+    }
     pub fn path() -> PathBuf {
         config_dir().join("sync.json")
     }
@@ -88,7 +139,11 @@ impl SyncConfig {
             let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
         }
 
-        let text = serde_json::to_string_pretty(self)
+        let mut saved = self.clone();
+        if saved.active_server.is_some() {
+            saved.remember_server()?;
+        }
+        let text = serde_json::to_string_pretty(&saved)
             .map_err(|e| format!("Could not serialize sync config: {}", e))?;
 
         #[cfg(unix)]
@@ -114,6 +169,44 @@ impl SyncConfig {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod server_tests {
+    use super::*;
+
+    #[test]
+    fn servers_keep_independent_credentials_keys_and_hosting_preferences() {
+        let mut config = SyncConfig {
+            host: "first.example".into(),
+            password: "test-one".into(),
+            host_key_sha256: "a".repeat(64),
+            ..Default::default()
+        };
+        config.remember_server().unwrap();
+        let first = config.active_server.unwrap();
+        config.active_server = None;
+        config.host = "second.example".into();
+        config.password = "test-two".into();
+        config.host_key_sha256 = "b".repeat(64);
+        config.manage_bepinex_launcher = true;
+        config.remember_server().unwrap();
+        let second = config.active_server.unwrap();
+        config.select_server(first).unwrap();
+        assert_eq!(config.password, "test-one");
+        assert_eq!(config.host_key_sha256, "a".repeat(64));
+        assert!(!config.manage_bepinex_launcher);
+        config.select_server(second).unwrap();
+        assert_eq!(config.password, "test-two");
+        assert!(config.manage_bepinex_launcher);
+        assert!(config.servers.iter().all(|s| s.config.servers.is_empty()));
+        let restored: SyncConfig =
+            serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+        assert_eq!(restored.servers.len(), 2);
+        let legacy: SyncConfig = serde_json::from_str(r#"{"host":"legacy.example"}"#).unwrap();
+        assert_eq!(legacy.host, "legacy.example");
+        assert!(legacy.servers.is_empty());
     }
 }
 

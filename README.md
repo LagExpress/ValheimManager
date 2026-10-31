@@ -76,6 +76,13 @@ release history.
 
 ## 🔄 Server Sync
 
+Save named servers under **Server Connection** and switch using the server selector.
+Each server remembers its connection credentials, trusted key, staging folder, and
+hosting compatibility preference. Switching preserves the current form and clears
+the previous server's preview, summary, and activity log. Server management is
+disabled during an active operation. Preview and activity panels now show up to
+480 and 520 points of content respectively; the page remains vertically scrollable.
+
 The **Server Sync** tab keeps a dedicated Valheim server's BepInEx folder aligned with the selected profile.
 
 **Hosting compatibility:** custom BepInEx launcher checks and repair are **off by default**, including when older saved settings have no value for this option. Leave this off when the provider already supplies BepInEx or does not allow executable replacement. To use the original custom-host behavior, enable **Enable custom BepInEx launcher checks and repair** under **Server Connection → Hosting compatibility**. The checkbox saves immediately. Enabled checks inspect the server launcher during preview and repair it before uploads; they may rename/replace `valheim_server.x86_64` and create its data symlink. When disabled, these operations are skipped and **Check & Fix Wrapper** is disabled. Config/plugin sync, SSH host-key verification, and `/BepInEx` folder access checks remain available.

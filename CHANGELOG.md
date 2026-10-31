@@ -4,6 +4,16 @@ Release notes describe changes introduced in each version. Use Added, Changed,
 Fixed, Removed, and Security sections where applicable. Keep entries focused on
 user-visible behavior; omit build reports, test counts, and development history.
 
+## [Unreleased]
+
+### Added
+
+- Named server profiles with independent connection settings, trusted keys, staging folders, and hosting preferences.
+
+### Changed
+
+- Increased the Server Sync preview and activity log heights to show more content before scrolling.
+
 ## [0.1.9] - 2026-10-30
 
 ### Added
